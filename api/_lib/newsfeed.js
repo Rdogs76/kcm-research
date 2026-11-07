@@ -127,13 +127,14 @@ export const tagged = (items) => items.map((n) => ({ ...n, ...classify(n.title),
 // Each negative headline carries a total weight of 1, split across its tags, so a headline that
 // mentions war + sanctions + tariffs isn't counted three times.
 export function drivers(items) {
-  const counts = {};
+  const counts = {}, heads = {};
   for (const n of items) {
     if (n.tone !== "negative" || !n.tags.length) continue;
-    for (const k of n.tags) counts[k] = (counts[k] || 0) + 1 / n.tags.length;
+    for (const k of n.tags) { counts[k] = (counts[k] || 0) + 1 / n.tags.length; heads[k] = (heads[k] || 0) + 1; }
   }
-  return CATEGORIES.filter((c) => counts[c.key]).map((c) => ({ key: c.key, name: c.name, macro: !!c.macro, count: Math.round(counts[c.key] * 10) / 10 }))
-    .sort((a, b) => b.count - a.count);
+  // `weight` ranks the themes; `count` is the plain number of negative headlines that mention each one.
+  return CATEGORIES.filter((c) => counts[c.key]).map((c) => ({ key: c.key, name: c.name, macro: !!c.macro, weight: Math.round(counts[c.key] * 10) / 10, count: heads[c.key] }))
+    .sort((a, b) => b.weight - a.weight || b.count - a.count);
 }
 
 // Share of negative, theme-tagged headlines that are purely macro (no company-specific theme).

@@ -164,7 +164,7 @@ export function build(q, det, hist, ctx = {}) {
     // Justified P/B (display only — it swings with small changes in the cost of equity).
     const roeUse = roeF ?? d.roe;
     const bClip = clip(d.beta ?? 1, 0.5, 1.8);
-    const coe = tnx / 100 + bClip * 0.055;
+    const coe = Math.max(0.09, tnx / 100 + bClip * 0.055); // floored: financials rarely clear a <9% cost of equity
     let jPB = null;
     if (roeUse != null && roeUse > 0) {
       const g = clip((roeUse / 100) * (1 - clip(payoutF ?? d.payout ?? 40, 0, 100) / 100), 0, 0.04);

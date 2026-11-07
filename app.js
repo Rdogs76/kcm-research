@@ -534,7 +534,7 @@ async function research(sym, alive) {
     tone = b.dataset.tone; drawNews();
   });
   // Headline-based red flags for the trap check.
-  const credLegal = (c.drivers || []).filter((dd) => ["credit", "legal"].includes(dd.key)).reduce((s2, dd) => s2 + dd.count, 0);
+  const credLegal = (c.drivers || []).filter((dd) => ["credit", "legal"].includes(dd.key)).reduce((s2, dd) => s2 + (dd.weight ?? dd.count), 0);
   if ($("#newsflags") && credLegal >= 3) $("#newsflags").innerHTML = `<div class="err" style="margin-top:8px">${Math.round(credLegal)} negative credit or legal headlines in 90 days — a red flag worth reading.</div>`;
 
   $("#copy").addEventListener("click", async () => {

@@ -40,7 +40,7 @@ function summarize(items, symbol) {
   const macroShare = shareOf(recent);
   let reason = null;
   if (drv.length) {
-    const top = drv.slice(0, 3).map((d) => `${d.name.toLowerCase()} (${d.count})`).join(", ");
+    const top = drv.slice(0, 3).map((d) => `${d.name.toLowerCase()} (${d.count} headline${d.count === 1 ? "" : "s"})`).join(", ");
     reason = macroShare != null && macroShare >= 50
       ? `Most negative headlines on ${symbol} are about the macro backdrop — ${top}. That is the kind of discount that can reverse when the news cycle turns, if the business itself is holding up.`
       : `Negative headlines on ${symbol} are mostly about the company itself — ${top}. Check whether these are one-offs or a lasting change before treating the discount as an opportunity.`;
