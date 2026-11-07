@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "api/screen.js": { "maxDuration": 60 },
+    "api/catalysts.js": { "maxDuration": 30 },
+    "api/analysts.js": { "maxDuration": 30 }
+  }
+}

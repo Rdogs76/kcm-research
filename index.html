@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f1417">
+  <meta name="description" content="King's Capital Management research dashboard: undervalued financial stocks on the TSX and NYSE, analyst ratings, and the news behind each discount.">
+  <title>KCM Research</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script>try { const t = localStorage.getItem("kcm-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}</script>
+</head>
+<body>
+  <header class="top">
+    <div class="bar">
+      <div class="brand"><img src="icon.svg" alt="">KCM Research <small>· Financials</small></div>
+      <nav class="tabs" aria-label="Sections">
+        <a href="#overview">Overview</a>
+        <a href="#screener">Screener</a>
+        <a href="#research">Research</a>
+        <a href="#catalysts">Catalysts</a>
+        <a href="#watchlist">Watchlist</a>
+        <a href="#calendar">Calendar</a>
+      </nav>
+      <div class="search">
+        <input id="q" type="search" placeholder="Ticker or company" aria-label="Search for a stock" autocomplete="off" role="combobox" aria-controls="qres" aria-expanded="false">
+        <div class="results" id="qres" role="listbox"></div>
+      </div>
+      <button class="icon-btn" id="theme" title="Toggle theme (T)" aria-label="Toggle theme">◐</button>
+    </div>
+  </header>
+  <main id="app"></main>
+  <footer>
+    Market data and analyst ratings from Yahoo Finance (delayed up to 15 minutes). Headlines from Yahoo Finance and Google News, which carries Bloomberg, Reuters, BNN Bloomberg, the Globe and Mail and others; each links to the original article. Economic calendar from ForexFactory.
+    Scores are a screening aid for club research, not investment advice. Watchlist and notes are stored only in this browser.
+    Shortcuts: <kbd>R</kbd> refresh · <kbd>T</kbd> theme · <kbd>/</kbd> search · <kbd>1</kbd>–<kbd>6</kbd> tabs.
+  </footer>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
