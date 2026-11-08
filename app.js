@@ -112,7 +112,7 @@ function lineChart(el, points, opts = {}) {
 const hbar = (name, val, max, txt, kind = "") => `<div class="hbar"><span title="${esc(name)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span><div class="track"><div class="fill ${kind}" style="width:${Math.min(100, (Math.abs(val ?? 0) / (max || 1)) * 100)}%"></div></div><span class="num" style="text-align:right">${txt}</span></div>`;
 
 // ---------- Router ----------
-const TABS = ["overview", "screener", "research", "catalysts", "watchlist", "calendar"];
+const TABS = ["overview", "screener", "research", "rates", "catalysts", "watchlist", "calendar"];
 let current = null;
 function route() {
   const [tab = "overview", arg] = location.hash.slice(1).split("/");
@@ -121,7 +121,7 @@ function route() {
   current = t + (arg || "");
   const token = current;
   window.scrollTo(0, 0);
-  ({ overview, screener, research, catalysts, watchlist, calendar })[t](arg ? decodeURIComponent(arg).toUpperCase() : null, () => token === current);
+  ({ overview, screener, research, rates, catalysts, watchlist, calendar })[t](arg ? decodeURIComponent(arg).toUpperCase() : null, () => token === current);
 }
 window.addEventListener("hashchange", route);
 const go = (sym) => { location.hash = `#research/${encodeURIComponent(sym)}`; };
@@ -366,6 +366,7 @@ async function research(sym, alive) {
       <div class="card"><div class="card-head"><h2>Cheap for its returns?</h2></div><div class="scatter" id="scatter">${skel(6)}</div></div>
       <div class="card span2"><div class="card-head"><h2>Analyst track records</h2><span class="muted" style="font-size:12px">Each firm's past calls on this stock, scored 12 months later</span></div><div id="firms">${skel(6)}</div></div>
     </div>
+    <div class="card" style="margin-top:14px" id="nimcard" hidden><div class="card-head"><h2>Net interest margin</h2><a href="#rates">All banks →</a></div><div id="nimbody">${skel(4)}</div></div>
     <div class="card" style="margin-top:14px"><div class="card-head"><h2>Pitch notes</h2><span class="muted" style="font-size:12px" id="saved"></span></div>
       <textarea class="notes" id="notes" placeholder="Thesis, the catalyst that closes the discount, risks, what would make you wrong…" aria-label="Pitch notes"></textarea>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap"><button class="btn" id="copy">Copy pitch summary</button><span class="muted" style="font-size:12px;align-self:center" id="copied" role="status"></span></div></div>`;
@@ -481,6 +482,22 @@ async function research(sym, alive) {
     scatter($("#scatter"), peers, sym);
   } else { $("#peers").innerHTML = `<div class="empty">Peer comparison is available for stocks in the financials universe.</div>`; $("#scatter").innerHTML = ""; }
 
+  if (row && BANK_GROUPS.includes(row.group)) {
+    $("#nimcard").hidden = false;
+    api(`/api/banks?symbol=${encodeURIComponent(sym)}`, 60 * 60e3).then((n) => {
+      if (!alive()) return;
+      if (n.error || !n.series?.length) { $("#nimbody").innerHTML = `<div class="empty">No quarterly statements from Yahoo for ${esc(sym)}.</div>`; return; }
+      $("#nimbody").innerHTML = `<div class="stats" style="margin-bottom:6px"><span>NIM proxy <b>${fix(n.nim)}%</b></span><span>Last quarter <b class="${cls(n.nimChg1q)}">${bp(n.nimChg1q)}</b></span><span>${n.nimChg4q != null ? "1 year" : `${n.spanQ} quarters`} <b class="${cls(n.nimChg4q ?? n.nimChgSpan)}">${bp(n.nimChg4q ?? n.nimChgSpan)}</b></span><span>Asset yield <b class="${cls(n.yieldChg)}">${bp(n.yieldChg)}</b></span><span>Funding cost <b class="${cls(n.costChg == null ? null : -n.costChg)}">${bp(n.costChg)}</b></span><span>NII y/y <b class="${cls(n.niiYoY)}">${pct(n.niiYoY, 0)}</b></span></div><div id="nimchart"></div>
+        <div class="faint" style="font-size:12px">Quarterly, annualised, as a share of average total assets (Yahoo Finance statements). The gap between the two dashed lines is the margin. The bank's reported NIM uses earning assets and runs higher.</div>`;
+      const t = (d) => Date.parse(d);
+      multiLine($("#nimchart"), [
+        { name: "NIM proxy", color: "var(--accent)", width: 2.5, points: n.series.map((q) => [t(q.date), q.nim]) },
+        { name: "Asset yield", color: "var(--up)", dash: "4 3", points: n.series.map((q) => [t(q.date), q.yieldA]) },
+        { name: "Funding cost", color: "var(--down)", dash: "4 3", points: n.series.map((q) => [t(q.date), q.cost]) },
+      ], { xticks: n.series.filter((_, i) => i % 2 === 0 || i === n.series.length - 1).map((q) => [t(q.date), new Date(q.date).toLocaleDateString(undefined, { month: "short", year: "2-digit" })]), yfmt: (v) => `${v.toFixed(2)}%`, dots: true, h: 200, label: "Net interest margin by quarter" });
+    }).catch((e) => { if (alive()) $("#nimbody").innerHTML = errBox(e); });
+  }
+
   api(`/api/analysts?symbol=${encodeURIComponent(sym)}`, 60 * 60e3).then((f) => {
     if (!alive()) return;
     const list = f.firms.filter((x2) => x2.active).slice(0, 8);
@@ -556,6 +573,152 @@ async function research(sym, alive) {
 }
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
 const medOf = (list, k) => { const v = list.map((p) => p[k]).filter(isNum).sort((a, b) => a - b); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+// ======================================================================
+// Rates & banks: yield curve, NIM expansion, trading desks
+// ======================================================================
+// Multi-line SVG chart. series: [{ name, color, dash, points: [[x, y], ...] }]
+function multiLine(el, series, o = {}) {
+  const all = series.flatMap((s) => s.points).filter((p) => isNum(p[1]));
+  if (!all.length) { el.innerHTML = `<div class="empty">No data.</div>`; return; }
+  const W = Math.max(280, el.clientWidth || 600), H = o.h || 230, P = { l: 44, r: 12, t: 12, b: 28 };
+  const xmap = o.xmap || ((v) => v);
+  const xs = all.map((p) => xmap(p[0])), ys = all.map((p) => p[1]).concat(o.zero ? [0] : []);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = (y1 - y0) * 0.1 || 0.1; y0 -= pad; y1 += pad;
+  const X = (v) => P.l + ((xmap(v) - x0) / (x1 - x0 || 1)) * (W - P.l - P.r), Y = (v) => P.t + (1 - (v - y0) / (y1 - y0)) * (H - P.t - P.b);
+  const yt = [0, 1, 2, 3].map((i) => y0 + ((y1 - y0) * (i + 0.5)) / 4);
+  const lines = series.map((s) => { const pts = s.points.filter((p) => isNum(p[1])); return pts.length ? `<path d="${pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("")}" fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/>${o.dots ? pts.map((p) => `<circle cx="${X(p[0])}" cy="${Y(p[1])}" r="2.5" fill="${s.color}"/>`).join("") : ""}` : ""; }).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(o.label || "chart")}">
+    ${yt.map((v) => `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)"/><text x="${P.l - 6}" y="${Y(v) + 4}" font-size="11" fill="var(--faint)" text-anchor="end">${(o.yfmt || ((v2) => v2.toFixed(2)))(v)}</text>`).join("")}
+    ${o.zero && y0 < 0 && y1 > 0 ? `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--muted)" stroke-dasharray="3 3"/>` : ""}
+    ${(o.xticks || []).map(([v, t]) => `<text x="${X(v)}" y="${H - 8}" font-size="11" fill="var(--faint)" text-anchor="middle">${t}</text>`).join("")}
+    ${lines}</svg>
+    <div class="chips" style="margin-top:4px">${series.map((s) => `<span class="chip" style="border-color:transparent"><svg width="18" height="6" aria-hidden="true"><line x1="0" x2="18" y1="3" y2="3" stroke="${s.color}" stroke-width="2" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/></svg>${esc(s.name)}</span>`).join("")}</div>`;
+}
+const TENOR_TICKS = [[0.25, "3M"], [1, "1Y"], [2, "2Y"], [5, "5Y"], [10, "10Y"], [30, "30Y"]];
+const tenorMap = (t) => Math.sqrt(t); // spreads the short end out so the front of the curve is readable
+const bp = (v) => (isNum(v) ? `${v > 0 ? "+" : ""}${v} bp` : "—");
+const BANK_GROUPS = ["cabank", "uslarge", "usreg"];
+
+function curveCard(id, d, title) {
+  if (!d) return `<div class="card"><div class="card-head"><h2>${title}</h2></div><div class="empty">Curve data unavailable right now.</div></div>`;
+  const r = d.regime?.m1, r3 = d.regime?.m3;
+  return `<div class="card"><div class="card-head"><h2>${title}</h2><span class="muted" style="font-size:12px">${esc(d.asOfDate)}</span></div>
+    <div class="stats" style="margin-bottom:6px"><span>Shape <b>${esc(d.shape || "—")}</b></span><span>2s10s <b class="${cls(d.levels.s2s10s)}">${bp(d.levels.s2s10s)}</b></span><span>3m10y <b class="${cls(d.levels.s3m10y)}">${bp(d.levels.s3m10y)}</b></span><span>2-yr <b>${fix(d.levels.y2)}%</b></span><span>10-yr <b>${fix(d.levels.y10)}%</b></span></div>
+    <div id="${id}"></div>
+    <div class="faint" style="font-size:12px;margin-top:6px">${r ? `1 month: <b style="color:var(--text)">${esc(r.name)}</b> (2-yr ${bp(r.d2)}, 10-yr ${bp(r.d10)})` : ""}${r3 ? ` · 3 months: <b style="color:var(--text)">${esc(r3.name)}</b>${r3.why ? ` (${esc(r3.why)})` : ""}` : ""}</div></div>`;
+}
+
+function rates(_, alive) {
+  app.innerHTML = `
+    <div class="page-head"><div><h1>Rates & banks</h1><div class="muted">The yield curve, which banks are widening their net interest margin, and how the big dealers' trading desks are doing.</div></div><div class="muted" id="rasof"></div></div>
+    <div id="rread">${skel(3)}</div>
+    <div class="strip" id="rkpi"></div>
+    <div class="grid g2"><div id="cus">${skel(6)}</div><div id="cca">${skel(6)}</div></div>
+    <div class="grid g2" style="margin-top:14px">
+      <div class="card"><div class="card-head"><h2>Curve slope over the past year</h2><span class="muted" style="font-size:12px">US, basis points</span></div><div id="slope">${skel(6)}</div></div>
+      <div class="card"><div class="card-head"><h2>Front-end volatility</h2><span class="muted" style="font-size:12px">2-yr yield, 20-day realised, bp/yr</span></div><div id="fvol">${skel(6)}</div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><div class="card-head"><h2>Net interest margin: who's widening?</h2><div class="chips" id="nimf" role="group" aria-label="Bank group"></div></div>
+      <div class="muted" style="font-size:13px;margin-bottom:8px">NIM = what a bank earns on loans and securities minus what it pays on deposits and borrowings, as a share of assets. The table splits it into those two sides, so you can see whether a margin is widening because asset yields are rising or because funding costs are falling.</div>
+      <div id="nimgroups" class="strip"></div><div class="table-wrap" id="nimt">${skel(8)}</div>
+      <div class="faint" style="font-size:12px;margin-top:8px">Built from Yahoo Finance quarterly statements: NIM ≈ net interest income × 4 ÷ average total assets. Banks report NIM on <i>earning</i> assets, so their own figure is higher; use the change, not the level. Bps = basis points (0.01%).</div></div>
+    <div class="card" style="margin-top:14px"><div class="card-head"><h2>Trading desks: FICC & derivatives</h2><span class="muted" style="font-size:12px" id="tq"></span></div><div id="trade">${skel(6)}</div></div>
+    <details class="card" style="margin-top:14px"><summary><h2 style="display:inline">Yield curve 101 for bank analysts</h2></summary>${PRIMER}</details>`;
+
+  api("/api/curve", 30 * 60e3).then((c) => {
+    if (!alive()) return;
+    $("#rasof").textContent = `Curves as of ${c.us?.asOfDate || c.ca?.asOfDate || "—"}`;
+    $("#rread").innerHTML = c.read.length ? `<div class="banner">${c.read.map((r) => `<p style="margin:4px 0"><b>${esc(r.k)}.</b> ${esc(r.t)}</p>`).join("")}</div>` : "";
+    const u = c.us;
+    $("#rkpi").innerHTML = [
+      ["US 2s10s", bp(u?.levels.s2s10s), u ? `${bp(u.changes.m1.s2s10s)} in 1m · ${bp(u.changes.y1.s2s10s)} in 1y` : "", cls(u?.levels.s2s10s)],
+      ["US 3m10y", bp(u?.levels.s3m10y), u ? `${bp(u.changes.m1.s3m10y)} in 1m` : "", cls(u?.levels.s3m10y)],
+      ["US 2-yr yield", u ? `${fix(u.levels.y2)}%` : "—", u ? `${bp(u.changes.m1.y2)} in 1m · ${bp(u.changes.y1.y2)} in 1y` : "", ""],
+      ["Fed funds (effective)", c.fed ? `${fix(c.fed.now)}%` : "—", c.fed?.yearAgo != null ? `${fix(c.fed.yearAgo)}% a year ago` : "", ""],
+      ["Bank of Canada rate", c.ca?.boc ? `${fix(c.ca.boc.now)}%` : "—", c.ca?.boc?.yearAgo != null ? `${fix(c.ca.boc.yearAgo)}% a year ago` : "", ""],
+      ["Front-end vol", u?.frontVol.now != null ? `${u.frontVol.now} bp` : "—", u?.frontVol.pct != null ? `higher than ${u.frontVol.pct}% of the past year` : "", u?.frontVol.pct >= 70 ? "warn" : ""],
+      ["MOVE index", c.move ? String(c.move.now) : "—", c.move?.pct != null ? `bond-market 'VIX' · ${c.move.pct}th pct (1y)` : "bond-market 'VIX'", ""],
+    ].map(([k, v, s2, c2]) => `<div class="cell"><div class="k">${k}</div><div class="v ${c2}">${v}</div><div class="s">${s2}</div></div>`).join("");
+    $("#cus").innerHTML = curveCard("cus-c", u, "US Treasury curve");
+    $("#cca").innerHTML = curveCard("cca-c", c.ca, "Government of Canada curve");
+    const draw = (id, d) => d && multiLine($(id), [
+      { name: `Today`, color: "var(--accent)", width: 2.5, points: d.curves.now.pts },
+      { name: `1 month ago`, color: "var(--muted)", dash: "4 3", points: d.curves.m1.pts },
+      { name: `1 year ago`, color: "var(--macro)", dash: "2 3", points: d.curves.y1.pts },
+    ], { xmap: tenorMap, xticks: TENOR_TICKS.filter(([t]) => d.curves.now.pts.some((p) => Math.abs(p[0] - t) < 0.01 || p[0] > t)), yfmt: (v) => `${v.toFixed(2)}%`, dots: true, label: "Yield curve" });
+    draw("#cus-c", u); draw("#cca-c", c.ca);
+    if (u) {
+      const t = (d) => Date.parse(d);
+      const hx = u.history;
+      const ticks = [0, 0.33, 0.66, 1].map((f) => hx[Math.min(hx.length - 1, Math.round(f * (hx.length - 1)))]).map((h) => [t(h[0]), new Date(h[0]).toLocaleDateString(undefined, { month: "short", year: "2-digit" })]);
+      multiLine($("#slope"), [
+        { name: "2s10s (10-yr minus 2-yr)", color: "var(--accent)", points: hx.map((h) => [t(h[0]), h[1]]) },
+        { name: "3m10y (10-yr minus 3-month)", color: "var(--macro)", points: hx.map((h) => [t(h[0]), h[2]]) },
+      ], { zero: true, xticks: ticks, yfmt: (v) => `${v.toFixed(0)}`, label: "Curve slope history" });
+      $("#slope").insertAdjacentHTML("beforeend", `<div class="faint" style="font-size:12px">Above zero = upward-sloping (good for bank margins); below zero = inverted.</div>`);
+      const fv = u.frontVol.series;
+      const vt = [0, 0.5, 1].map((f) => fv[Math.min(fv.length - 1, Math.round(f * (fv.length - 1)))]).filter(Boolean).map((h) => [t(h[0]), new Date(h[0]).toLocaleDateString(undefined, { month: "short", year: "2-digit" })]);
+      multiLine($("#fvol"), [{ name: "2-yr realised vol", color: "var(--warn)", points: fv.map(([d, v]) => [t(d), v]) }, ...(c.move ? [{ name: "MOVE index (rescaled)", color: "var(--muted)", dash: "4 3", points: c.move.series.map(([d, v]) => [t(d), v * (fv.at(-1)?.[1] || 1) / (c.move.now || 1)]) }] : [])], { xticks: vt, yfmt: (v) => v.toFixed(0), label: "Front-end volatility" });
+      $("#fvol").insertAdjacentHTML("beforeend", `<div class="faint" style="font-size:12px">Bigger, choppier moves in short rates mean more hedging flow for rates and derivatives desks. ${u.frontVol.bigDays} day${u.frontVol.bigDays === 1 ? "" : "s"} with a 10 bp+ move in the 2-yr over the last month.</div>`);
+    } else { $("#slope").innerHTML = ""; $("#fvol").innerHTML = ""; }
+    if (c.errors?.length) $("#rread").insertAdjacentHTML("beforeend", `<div class="faint" style="font-size:12px;margin:-6px 0 12px">Some sources didn't respond: ${esc(c.errors.join("; "))}</div>`);
+  }).catch((e) => { if (alive()) { $("#rread").innerHTML = errBox(e); ["#cus", "#cca", "#slope", "#fvol"].forEach((s) => { $(s).innerHTML = ""; }); } });
+
+  Promise.all([api("/api/banks", 60 * 60e3), screen().catch(() => null)]).then(([b, d]) => {
+    if (!alive()) return;
+    const by = Object.fromEntries((d?.stocks || []).map((s) => [s.symbol, s]));
+    $("#nimgroups").innerHTML = b.groups.map((g) => `<div class="cell"><div class="k">${esc(g.name)}</div><div class="v ${cls(g.nimChg4q)}">${bp(g.nimChg4q)}</div><div class="s">median NIM change (1y) · ${g.widening}/${g.count} widened last quarter · NII ${pct(g.niiYoY, 0)} y/y</div></div>`).join("");
+    let grp = "all";
+    const drawT = () => {
+      const rows = b.banks.filter((x2) => grp === "all" || x2.group === grp);
+      $("#nimf").innerHTML = [["all", "All banks"], ...BANK_GROUPS.map((g) => [g, b.groups.find((x2) => x2.key === g)?.name || g])].map(([k, n]) => `<button class="chip ${grp === k ? "on" : ""}" data-g="${k}" aria-pressed="${grp === k}">${esc(n)}</button>`).join("");
+      $("#nimt").innerHTML = rows.length ? `<table class="sticky"><thead><tr><th scope="col" class="l">Bank</th><th scope="col">NIM momentum</th><th scope="col">NIM (proxy)</th><th scope="col">Δ last qtr</th><th scope="col">Δ 1 year</th><th scope="col">Asset yield Δ</th><th scope="col">Funding cost Δ</th><th scope="col">NII y/y</th><th scope="col">Value score</th><th scope="col">Upside</th><th scope="col" class="l">Signal</th></tr></thead><tbody>
+        ${rows.map((x2) => { const s = by[x2.symbol]; const both = (x2.nimScore ?? 0) >= 65 && s && ["Undervalued", "Watch"].includes(s.label);
+          return `<tr><td class="l">${starBtn(x2.symbol, s?.price)}${link(x2.symbol, `<b>${esc(x2.symbol)}</b> <span class="name">${esc(s?.name || x2.groupName)}</span>`)}${both ? ` <span class="label undervalued" title="Widening margin and screens cheap">NIM + value</span>` : ""}</td>
+          <td class="num"><b>${x2.nimScore ?? "—"}</b>${x2.streak === 2 ? ` <span class="faint" title="Widened two quarters in a row">↑↑</span>` : ""}</td>
+          <td class="num">${fix(x2.nim)}%</td><td class="num ${cls(x2.nimChg1q)}">${bp(x2.nimChg1q)}</td>
+          <td class="num ${cls(x2.nimChg4q ?? x2.nimChgSpan)}" title="${x2.nimChg4q == null ? `Over ${x2.spanQ} quarters (a full year isn't available)` : ""}">${bp(x2.nimChg4q ?? x2.nimChgSpan)}${x2.nimChg4q == null ? "*" : ""}</td>
+          <td class="num ${cls(x2.yieldChg)}">${bp(x2.yieldChg)}</td><td class="num ${cls(x2.costChg == null ? null : -x2.costChg)}">${bp(x2.costChg)}</td>
+          <td class="num ${cls(x2.niiYoY)}">${pct(x2.niiYoY, 0)}</td>
+          <td class="num">${s?.score ?? "—"}</td><td class="num ${cls(s?.upside)}">${pct(s?.upside, 0)}</td><td class="l">${label(s?.label)}</td></tr>`; }).join("")}</tbody></table>`
+        : `<div class="empty">No quarterly data came back for these banks.</div>`;
+    };
+    drawT();
+    $("#nimf").addEventListener("click", (e) => { const c2 = e.target.closest("[data-g]"); if (c2) { grp = c2.dataset.g; drawT(); } });
+    const errs = Object.keys(b.errors || {});
+    if (errs.length) $("#nimt").insertAdjacentHTML("afterend", `<div class="faint" style="font-size:12px;margin-top:6px">No quarterly statements from Yahoo for: ${esc(errs.join(", "))}</div>`);
+
+    // Trading desks
+    const T = b.trading;
+    $("#tq").textContent = T.quarter;
+    $("#trade").innerHTML = `<div class="banner" style="border-left-color:var(--warn)">${esc(T.note)}</div>
+      <div class="table-wrap" style="border:0"><table><thead><tr><th scope="col" class="l">Dealer</th><th scope="col">FICC revenue</th><th scope="col">FICC y/y</th><th scope="col">Equities revenue</th><th scope="col">Equities y/y</th><th scope="col">Value score</th><th scope="col" class="l">What drove fixed income</th></tr></thead><tbody>
+      ${T.rows.map((r) => { const s = by[r.symbol]; return `<tr><td class="l">${link(r.symbol, `<b>${esc(r.symbol)}</b> <span class="name">${esc(r.name)}</span>`)}</td>
+        <td class="num">${r.ficc != null ? `$${r.ficc.toFixed(2)}B` : r.markets != null ? `<span title="Global Markets (FICC + equities)">C$${r.markets.toFixed(2)}B*</span>` : "—"}</td>
+        <td class="num ${cls(r.ficcYoY ?? r.marketsYoY)}">${pct(r.ficcYoY ?? r.marketsYoY, 0)}</td>
+        <td class="num">${r.eq != null ? `$${r.eq.toFixed(2)}B` : "—"}</td><td class="num ${cls(r.eqYoY)}">${pct(r.eqYoY, 0)}</td>
+        <td class="num">${s?.score ?? "—"}</td>
+        <td class="l" style="white-space:normal;min-width:240px;font-size:12px"><a href="${esc(r.src)}" target="_blank" rel="noopener noreferrer">${esc(r.driver)}</a></td></tr>`; }).join("")}</tbody></table></div>
+      <div class="faint" style="font-size:12px;margin-top:8px">* RBC reports Global Markets (FICC + equities together). ${esc(T.context.fed)} (<a href="${esc(T.context.src)}" target="_blank" rel="noopener noreferrer">source</a>). These figures are entered by hand from earnings releases; update <code>api/_lib/trading.js</code> each quarter. The Canadian banks' next results come in early December.</div>`;
+  }).catch((e) => { if (alive()) { $("#nimt").innerHTML = `<div style="padding:16px">${errBox(e)}</div>`; $("#trade").innerHTML = ""; } });
+}
+
+const PRIMER = `<div style="font-size:14px;line-height:1.6;max-width:820px">
+  <p><b>What it is.</b> The yield curve plots government bond yields against maturity, from 1 month to 30 years. Normally it slopes up, because lenders want more for tying money up longer. The short end is anchored by the central bank's policy rate and what markets expect it to do over the next 1–2 years. The long end reflects expected growth and inflation plus a "term premium".</p>
+  <p><b>The spreads people quote.</b> <b>2s10s</b> = 10-yr minus 2-yr yield, the classic steepness gauge. <b>3m10y</b> = 10-yr minus 3-month, the version the Fed's research leans on for recession signals. A negative spread means the curve is <b>inverted</b>: markets expect rates to fall, usually because they expect a slowdown.</p>
+  <p><b>How it moves.</b> <i>Bull steepener</i>: short rates fall faster (markets pricing cuts). <i>Bear steepener</i>: long rates rise faster (inflation, deficits, term premium). <i>Bear flattener</i>: short rates rise faster (hikes being priced). <i>Bull flattener</i>: long rates fall faster (growth fears, flight to safety).</p>
+  <p><b>Why banks care: NIM.</b> Banks borrow short (deposits, which reprice with the policy rate) and lend or invest longer (mortgages, loans, bonds). A steeper curve widens the gap between the two. The speed matters too:</p>
+  <ul>
+    <li><b>Deposit beta</b> is the share of a rate move passed on to depositors. Low betas (sticky chequing deposits) mean rising rates widen margins. High betas (rate-sensitive savings, CDs, GICs) eat the benefit.</li>
+    <li><b>Asset sensitivity.</b> Banks with lots of floating-rate loans gain fast when short rates rise. Banks with lots of fixed-rate mortgages or bonds bought at low yields gain slowly, but keep gaining as those assets <b>reprice</b> or mature into higher yields. That "back-book repricing" is a big NIM driver right now.</li>
+    <li><b>Canada</b> is different: 5-year fixed mortgages dominate, so the 5-yr Government of Canada yield matters more than the 10-yr, and the 2021–22 mortgages renewing now reprice much higher.</li>
+  </ul>
+  <p><b>Why banks care: trading.</b> FICC (fixed income, currencies and commodities) desks make markets for clients. When the front end is volatile (the Fed or BoC surprising, data moving rate expectations), clients hedge more and bid-ask spreads widen, which tends to lift rates and derivatives revenue. Volatility that is <i>too</i> violent, or one-directional, can hurt desks holding inventory. And as Q3 2026 showed, volatility does not guarantee a strong FICC quarter.</p>
+  <p><b>The risks.</b> A steeper curve because growth is collapsing usually comes with rising loan losses, which can outweigh the margin benefit. Inversion plus credit stress is the worst mix for banks. Rising long yields also cut the value of bonds banks already hold (unrealised losses, the SVB problem in 2023).</p>
+  <p><b>How to use this page.</b> Start with the curve shape and regime. Then look for banks where NIM is widening <i>and</i> the screener says they're still cheap (the "NIM + value" tag). Check whether the widening comes from asset yields rising (durable if driven by repricing) or funding costs falling (can reverse). For trading names, check reported FICC growth, not just the volatility backdrop.</p>
+</div>`;
+
 // ======================================================================
 // Catalysts
 // ======================================================================
@@ -659,7 +822,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "/") { e.preventDefault(); q.focus(); }
   else if (e.key === "t" || e.key === "T") toggleTheme();
   else if (e.key === "r" || e.key === "R") { cache.clear(); route(); }
-  else if (/^[1-6]$/.test(e.key)) location.hash = "#" + TABS[Number(e.key) - 1];
+  else if (/^[1-7]$/.test(e.key)) location.hash = "#" + TABS[Number(e.key) - 1];
 });
 
 route();

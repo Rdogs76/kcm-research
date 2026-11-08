@@ -1,7 +1,19 @@
 {
   "functions": {
-    "api/screen.js": { "maxDuration": 60 },
-    "api/catalysts.js": { "maxDuration": 30 },
-    "api/analysts.js": { "maxDuration": 30 }
+    "api/screen.js": {
+      "maxDuration": 60
+    },
+    "api/catalysts.js": {
+      "maxDuration": 30
+    },
+    "api/analysts.js": {
+      "maxDuration": 30
+    },
+    "api/banks.js": {
+      "maxDuration": 60
+    },
+    "api/curve.js": {
+      "maxDuration": 30
+    }
   }
 }

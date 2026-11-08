@@ -14,6 +14,7 @@ It is built on the same base as the portfolio dashboard: the same `api/_lib/util
 | Overview | Top ideas, how many names screen as undervalued, which peer group has been marked down most, the macro themes driving financials, rates and market pulse, macro headlines |
 | Screener | Every stock in the universe with peer-relative valuation, drop from 52-week high, analyst upside and rating, EPS revisions, ROE, yield, score and signal. Filter, sort, export CSV, star to watchlist |
 | Research | One stock: price chart with the analyst target, valuation vs peers, *why it's cheap* (macro vs company-specific split + tagged headlines), value-trap check, Street view, analyst track records, pitch notes with a copy-to-clipboard pitch summary |
+| Rates & banks | US Treasury and Government of Canada yield curves (today vs 1 month and 1 year ago), 2s10s / 3m10y history, the curve's shape and regime (bull/bear steepener or flattener), front-end volatility (2-yr realised vol and the MOVE index), fed funds and BoC rates, and a plain-English read of what the curve means for bank margins and trading. A **net interest margin** screen ranks every bank by how fast its margin is widening, split into asset yield vs funding cost, and tags banks that are both widening and cheap ("NIM + value"). A **trading desks** panel shows dealer FICC and equities results with sources. Includes a yield curve primer |
 | Catalysts | Headlines on war, geopolitics, tariffs, rates, recession, credit, private credit, catastrophe losses and more, with a theme-heat chart |
 | Watchlist | Starred names, price change since you starred them, current score and signal, first line of your notes |
 | Calendar | This week's US and Canadian events, with rate decisions and inflation prints flagged |
@@ -63,7 +64,7 @@ Every headline links to the original article. Headlines are tagged by theme and 
 
 Live at **https://kcm-research.vercel.app**, deployed from `github.com/Rdogs76/kcm-research`. Every push to `main` redeploys automatically. No environment variables or API keys are needed.
 
-The project uses 11 serverless functions, under the free plan's limit of 12. `vercel.json` gives the
+The project uses 11 serverless functions (`/api/banks` and `/api/curve` are the rates routes), under the free plan's limit of 12. `vercel.json` gives the
 screen route up to 60 seconds, because it pulls about 140 stocks plus their price history on a cold cache. After that the result
 is cached at the edge for 6 hours.
 
@@ -76,6 +77,12 @@ that version here so both behave the same.
 npm install
 npx vercel dev
 ```
+
+## Rates data
+
+- **US curve:** U.S. Treasury daily par yield curve CSV. **Canada:** Bank of Canada Valet API (benchmark bonds and T-bills, plus the overnight rate). **Fed funds:** FRED (DFF). **MOVE:** Yahoo Finance.
+- **NIM** comes from Yahoo Finance's quarterly statements: net interest income × 4 ÷ average total assets. This is a proxy. Banks report NIM on earning assets, so watch the change, not the level.
+- **FICC / trading** figures are entered by hand in `api/_lib/trading.js` from earnings releases. Update them each quarter.
 
 ## Change the universe
 

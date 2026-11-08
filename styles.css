@@ -205,3 +205,10 @@ textarea.notes { width: 100%; min-height: 140px; background: var(--panel-2); bor
 @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 .err { color: var(--down); font-size: 13px; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+details.card > summary { cursor: pointer; list-style: none; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: "▸ "; color: var(--muted); }
+details[open].card > summary::before { content: "▾ "; }
+details.card[open] > summary { margin-bottom: 8px; }
+code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
