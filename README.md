@@ -48,6 +48,21 @@ The details are in `api/screen.js`. The score is a 0–100 percentile across the
 
 **Justified P/B** = (ROE − g) / (cost of equity − g), with cost of equity = max(9%, 10-yr yield + beta × 5.5%). It is shown for reference only, because it is sensitive to its inputs.
 
+## Rates thesis
+
+The club's current thesis is that banks with widening net interest margins, and dealers with strong FICC and derivatives desks, benefit from today's yield curve and front-end volatility. Every bank and dealer gets a **Rates thesis** score (0–100), separate from the value score:
+
+- **Banks:** NIM change over a year (45%), last quarter (20%), net interest income growth (20%), and asset-yield change (15%). Asset-yield growth is weighted because expansion from repricing lasts longer than expansion from cheaper deposits.
+- **Dealers:** FICC (or Global Markets) growth (50%), equities trading growth (25%), and how the stock trades with the MOVE index (25%).
+
+**"Fits thesis"** means a thesis score of 65 or more, a value score of 45 or more, and no value-trap label.
+
+Where it appears:
+
+- The **Overview** has a rates-thesis card, with a one-line read of the curve.
+- The **Screener** has a *Lens* filter: Fits rates thesis, NIM widening, Dealers, Banks.
+- **Research pages** show the thesis bullets, and the copied pitch summary includes them.
+
 ## Where the news comes from
 
 Bloomberg has no free API. The dashboard gathers headlines server-side from three places:

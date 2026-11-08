@@ -19,6 +19,8 @@
 import { yf, send, fail, num, time, NO_VALIDATE } from "./_lib/util.js";
 import { pool, quotes, ranks, clip, r1, DAY } from "./_lib/screen.js";
 import { UNIVERSE, GROUPS, FACTORS, exchangeOf, capTier } from "./_lib/universe.js";
+import { one as bankNim, BANK_GROUPS } from "./banks.js";
+import { TRADING } from "./_lib/trading.js";
 
 const med = (xs) => { const v = xs.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -142,7 +144,7 @@ export function build(q, det, hist, ctx = {}) {
 
     // Sector vs own move over 3 months, and macro sensitivities.
     const h = hist[sym], e = hist[G.etf];
-    let beta = null, sector3m = null, own3m = null, ret3m = null, sens = null;
+    let beta = null, sector3m = null, own3m = null, ret3m = null, sens = null, corr = {};
     if (h?.size && e?.size) {
       const p = paired(h, e);
       beta = betaCorr(p.ra, p.rb).beta;
@@ -158,7 +160,9 @@ export function build(q, det, hist, ctx = {}) {
         const { corr } = betaCorr(pp.ra, pp.rb);
         return corr == null ? null : { ...f, corr: r2(corr) };
       }).filter(Boolean).sort((a, b) => Math.abs(b.corr) - Math.abs(a.corr));
-      if (cands[0] && Math.abs(cands[0].corr) >= 0.3) sens = { label: cands[0].label, name: cands[0].name, corr: cands[0].corr };
+      corr = Object.fromEntries(cands.map((c) => [c.symbol, c.corr]));
+      const top = cands.find((c) => c.symbol !== "^MOVE");
+      if (top && Math.abs(top.corr) >= 0.3) sens = { label: top.label, name: top.name, corr: top.corr };
     }
 
     // Justified P/B (display only — it swings with small changes in the cost of equity).
@@ -181,7 +185,7 @@ export function build(q, det, hist, ctx = {}) {
       coe: r1(coe * 100), jPB: r2(jPB), fairValue: jPB && bvps ? r2(jPB * bvps) : null,
       high52: high, low52: low,
       offHigh: high ? r1((price / high - 1) * 100) : null,
-      chg1y: r1(chg1y), ret3m: r1(ret3m), sector3m: r1(sector3m), own3m: r1(own3m), etfBeta: r2(beta), sens,
+      chg1y: r1(chg1y), ret3m: r1(ret3m), sector3m: r1(sector3m), own3m: r1(own3m), etfBeta: r2(beta), sens, corr,
       target: d.target, targetHigh: d.targetHigh, targetLow: d.targetLow,
       upside: d.target ? r1((d.target / price - 1) * 100) : null,
       recMean: d.recMean, rating: analystLabel(d.recMean), analysts: d.analysts, counts: d.counts || null,
@@ -280,6 +284,45 @@ export function build(q, det, hist, ctx = {}) {
   });
   stocks.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
 
+  // ---- Rates thesis: banks with widening NIM, dealers with strong FICC / derivatives desks ----
+  const nim = ctx.nim || {}, trade = Object.fromEntries((ctx.trading?.rows || []).map((r) => [r.symbol, r]));
+  const banks = stocks.filter((s) => BANK_GROUPS.includes(s.group));
+  for (const s of banks) {
+    const n = nim[s.symbol]; if (!n) continue;
+    s.nim = { level: n.nim, chg1q: n.nimChg1q, chg1y: n.nimChg4q ?? n.nimChgSpan, full: n.nimChg4q != null, yieldChg: n.yieldChg, costChg: n.costChg, niiYoY: n.niiYoY, streak: n.streak, quarter: n.quarter };
+  }
+  const withNim = banks.filter((s) => s.nim);
+  const NR = { y: ranks(withNim.map((s) => s.nim.chg1y)), q: ranks(withNim.map((s) => s.nim.chg1q)), g: ranks(withNim.map((s) => s.nim.niiYoY)), a: ranks(withNim.map((s) => s.nim.yieldChg)) };
+  withNim.forEach((s, i) => {
+    let t = 0, w = 0;
+    for (const [k, wt] of [["y", 0.45], ["q", 0.2], ["g", 0.2], ["a", 0.15]]) if (NR[k][i] != null) { t += NR[k][i] * wt; w += wt; }
+    s.thesis = w ? Math.round(t / w) : null;
+    s.thesisType = "NIM";
+    const n = s.nim, tw = [];
+    if (n.chg1y != null && n.chg1y > 0) tw.push(`NIM up ${n.chg1y} bp over ${n.full ? "the past year" : "the quarters available"}${n.streak === 2 ? ", widening two quarters running" : ""}`);
+    if (n.chg1y != null && n.chg1y <= 0) tw.push(`NIM ${n.chg1y === 0 ? "flat" : `down ${Math.abs(n.chg1y)} bp`} over the past year`);
+    if (n.yieldChg != null && n.costChg != null) tw.push(n.yieldChg > 0 && n.costChg < 0 ? `Both sides helping: asset yields ${n.yieldChg > 0 ? "+" : ""}${n.yieldChg} bp, funding costs ${n.costChg} bp` : n.costChg < 0 ? `Driven by cheaper funding (${n.costChg} bp); asset yields ${n.yieldChg >= 0 ? "+" : ""}${n.yieldChg} bp. Funding-led gains can reverse if deposit competition returns` : n.yieldChg > 0 ? `Driven by higher asset yields (+${n.yieldChg} bp), the more durable kind of expansion` : `Asset yields ${n.yieldChg} bp, funding costs ${n.costChg >= 0 ? "+" : ""}${n.costChg} bp`);
+    if (n.niiYoY != null) tw.push(`Net interest income ${n.niiYoY >= 0 ? "up" : "down"} ${Math.abs(n.niiYoY).toFixed(0)}% y/y`);
+    s.thesisWhy = tw;
+  });
+  const dealers = stocks.filter((s) => trade[s.symbol]);
+  const DR = { f: ranks(dealers.map((s) => trade[s.symbol].ficcYoY ?? trade[s.symbol].marketsYoY)), e: ranks(dealers.map((s) => trade[s.symbol].eqYoY)), m: ranks(dealers.map((s) => s.corr?.["^MOVE"] ?? null)) };
+  dealers.forEach((s, i) => {
+    const t2 = trade[s.symbol];
+    let t = 0, w = 0;
+    for (const [k, wt] of [["f", 0.5], ["e", 0.25], ["m", 0.25]]) if (DR[k][i] != null) { t += DR[k][i] * wt; w += wt; }
+    const dealerScore = w ? Math.round(t / w) : null;
+    if (s.thesis == null || (dealerScore ?? 0) > s.thesis) { s.thesis = dealerScore; s.thesisType = "Trading"; }
+    s.trading = { ficc: t2.ficc, ficcYoY: t2.ficcYoY, markets: t2.markets, marketsYoY: t2.marketsYoY, eqYoY: t2.eqYoY, driver: t2.driver, src: t2.src, moveCorr: s.corr?.["^MOVE"] ?? null };
+    const tw = [];
+    const fy = t2.ficcYoY ?? t2.marketsYoY;
+    if (fy != null) tw.push(`${t2.ficcYoY != null ? "FICC" : "Global Markets"} revenue ${fy >= 0 ? "+" : ""}${fy}% y/y last quarter (${t2.driver})`);
+    if (t2.eqYoY != null) tw.push(`Equities trading ${t2.eqYoY >= 0 ? "+" : ""}${t2.eqYoY}% y/y`);
+    if (s.trading.moveCorr != null) tw.push(`Stock ${s.trading.moveCorr > 0.1 ? "tends to rise" : s.trading.moveCorr < -0.1 ? "tends to fall" : "barely reacts"} when rates volatility (MOVE) rises (correlation ${s.trading.moveCorr > 0 ? "+" : ""}${s.trading.moveCorr})`);
+    s.thesisWhy = [...(s.thesisWhy || []), ...tw];
+  });
+  for (const s of stocks) s.thesisFit = s.thesis != null && s.thesis >= 65 && s.label !== "Possible value trap" && (s.score ?? 0) >= 45;
+
   // ---- Where the discount sits, by peer group ----
   const groupList = Object.entries(byGroup).map(([g, list]) => ({
     key: g, name: GROUPS[g].name, metric: GROUPS[g].metric, etf: GROUPS[g].etf, count: list.length,
@@ -297,21 +340,25 @@ export function build(q, det, hist, ctx = {}) {
     ? `${hurt.map((g) => `${g.name} (median ${Math.abs(g.offHigh).toFixed(0)}% off highs)`).join(" and ")} have been marked down the most. ${undervalued.length} name${undervalued.length === 1 ? "" : "s"} screen as undervalued — cheap for their returns, backed by analysts, without value-trap signals${undervalued.length ? `; ${sectorDriven} of them fell with their sector rather than on company news, the kind of discount that can close when the macro story turns` : ""}.`
     : null;
 
-  return { stocks, groups: groupList, insight, usdcad, tnx, slope: r2(slope), skipped, fxFallback: !usdcad };
+  const thesisCount = stocks.filter((s) => s.thesisFit).length;
+  return { stocks, groups: groupList, insight, usdcad, tnx, slope: r2(slope), skipped, fxFallback: !usdcad, thesisCount, tradingQuarter: ctx.trading?.quarter || null };
 }
 
 export default async function handler(req, res) {
   try {
     const syms = UNIVERSE.map((u) => u[0]);
     const extra = [...new Set([...Object.values(GROUPS).map((g) => g.etf), ...FACTORS.map((f) => f.symbol)])];
-    const [q, det, histList] = await Promise.all([
+    const bankSyms = UNIVERSE.filter((u) => BANK_GROUPS.includes(u[1])).map((u) => u[0]);
+    const [q, det, histList, nimList] = await Promise.all([
       quotes([...syms, "USDCAD=X", "^TNX"]),
       pool(syms, 12, details),
       pool([...syms, ...extra], 12, closes),
+      pool(bankSyms, 8, (s) => bankNim(s).catch(() => null)),
     ]);
+    const nim = {}; bankSyms.forEach((s, i) => { if (nimList[i]) nim[s] = nimList[i]; });
     const hist = {};
     [...syms, ...extra].forEach((s, i) => { if (histList[i]) hist[s] = histList[i]; });
-    const ctx = { usdcad: num(q["USDCAD=X"]?.regularMarketPrice), tnx: num(q["^TNX"]?.regularMarketPrice) };
+    const ctx = { usdcad: num(q["USDCAD=X"]?.regularMarketPrice), tnx: num(q["^TNX"]?.regularMarketPrice), nim, trading: TRADING };
     send(res, 200, { ...build(q, det, hist, ctx), asOf: Date.now() }, 6 * 3600);
   } catch (e) { fail(res, e); }
 }

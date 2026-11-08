@@ -141,6 +141,10 @@ function overview(_, alive) {
   app.innerHTML = `
     <div class="page-head"><div><h1>Undervalued financials</h1><div class="muted">TSX and NYSE banks, insurers, lenders, managers, exchanges and mortgage REITs trading cheap for their returns — and whether the discount comes from the news cycle or the business.</div></div><div class="muted" id="asof"></div></div>
     <div id="insight"></div>
+    <div class="card" style="margin-bottom:14px"><div class="card-head"><h2>Your rates thesis: NIM expansion + trading desks</h2><a href="#rates">Rates & banks →</a></div>
+      <div id="tcurve" class="muted" style="font-size:13px;margin-bottom:10px">${skel(1)}</div>
+      <div class="grid g2"><div><div class="faint" style="font-size:12px;margin-bottom:4px">Banks widening their margin that still screen cheap</div><div id="tnim">${skel(4)}</div></div>
+      <div><div class="faint" style="font-size:12px;margin-bottom:4px">Dealer trading desks (FICC & derivatives)</div><div id="tdeal">${skel(4)}</div></div></div></div>
     <div class="grid g4" id="kpis">${Array.from({ length: 4 }, () => `<div class="card kpi">${skel(2)}</div>`).join("")}</div>
     <div class="card" style="margin-top:14px"><div class="card-head"><h2>Top ideas right now</h2><a href="#screener">Full screen →</a></div><div class="grid g3" id="picks">${skel(4)}</div></div>
     <div class="grid g2" style="margin-top:14px">
@@ -166,6 +170,12 @@ function overview(_, alive) {
       <div class="card kpi"><div class="label">Median analyst upside on those</div><div class="value ${cls(medUp)}">${pct(medUp, 0)}</div><div class="sub">to the average price target</div></div>
       <div class="card kpi"><div class="label">Most marked-down group</div><div class="value" style="font-size:18px;margin-top:6px">${esc(worst?.name || "—")}</div><div class="sub">${worst ? `${pct(worst.offHigh, 0)} from highs · ${pct(worst.upside, 0)} to targets` : ""}</div></div>
       <div class="card kpi"><div class="label">Possible value traps</div><div class="value warn">${traps}</div><div class="sub">cheap, but estimates or returns are slipping</div></div>`;
+    // Rates thesis lists
+    const nimRows = d.stocks.filter((s) => s.thesisType === "NIM" && s.nim).sort((a, b) => ((b.thesisFit ? 1000 : 0) + (b.thesis ?? 0) + (b.score ?? 0) * 0.5) - ((a.thesisFit ? 1000 : 0) + (a.thesis ?? 0) + (a.score ?? 0) * 0.5)).slice(0, 6);
+    const thRow = (s, right) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px"><span>${link(s.symbol, `<b>${esc(s.symbol)}</b>`)} ${s.thesisFit ? `<span class="label undervalued">Fits thesis</span>` : label(s.label)}</span><span class="num muted">${right}</span></div>`;
+    $("#tnim").innerHTML = nimRows.length ? nimRows.map((s) => thRow(s, `NIM <b class="${cls(s.nim.chg1y)}">${s.nim.chg1y > 0 ? "+" : ""}${s.nim.chg1y ?? "—"} bp</b> · NII ${pct(s.nim.niiYoY, 0)} · value ${s.score ?? "—"}`)).join("") : `<div class="empty">No NIM data yet.</div>`;
+    const dl = d.stocks.filter((s) => s.trading).sort((a, b) => (b.thesis ?? 0) - (a.thesis ?? 0));
+    $("#tdeal").innerHTML = dl.length ? dl.map((s) => thRow(s, `${s.trading.ficcYoY != null ? "FICC" : "Mkts"} <b class="${cls(s.trading.ficcYoY ?? s.trading.marketsYoY)}">${pct(s.trading.ficcYoY ?? s.trading.marketsYoY, 0)}</b> · Eq ${pct(s.trading.eqYoY, 0)} · value ${s.score ?? "—"}`)).join("") + `<div class="faint" style="font-size:12px;margin-top:6px">${esc(d.tradingQuarter || "")}. FICC lagged equities last quarter, so the volatility case still needs to show up in results.</div>` : `<div class="empty">No dealer data.</div>`;
     const picks = (uv.length >= 3 ? uv : d.stocks).slice(0, 6);
     $("#picks").innerHTML = picks.map((s) => `
       <div class="card pick" data-go="${esc(s.symbol)}" style="background:var(--panel-2)">
@@ -198,6 +208,13 @@ function overview(_, alive) {
     $("#heads").innerHTML = newsItems(m.news.slice(0, 7));
   }).catch((e) => { if (alive()) { $("#heat").innerHTML = errBox(e); $("#heads").innerHTML = ""; } });
 
+  api("/api/curve", 30 * 60e3).then((c) => {
+    if (!alive()) return;
+    const u = c.us; if (!u) { $("#tcurve").textContent = ""; return; }
+    const r = u.regime?.m3, r1m = u.regime?.m1;
+    $("#tcurve").innerHTML = `US curve <b style="color:var(--text)">${esc(u.shape)}</b>, 2s10s <b style="color:var(--text)">${bp(u.levels.s2s10s)}</b> (${bp(u.changes.y1.s2s10s)} in a year)${r ? ` · 3 months: <b style="color:var(--text)">${esc(r.name.toLowerCase())}</b>` : ""}${r1m ? `, last month: ${esc(r1m.name.toLowerCase())}` : ""} · front-end vol higher than <b style="color:var(--text)">${u.frontVol.pct ?? "—"}%</b> of the past year${c.move ? ` · MOVE ${c.move.now}` : ""}. ${u.levels.s2s10s > 0 ? "A positively sloped curve supports margins;" : "An inverted curve squeezes margins;"} front-end volatility is ${(u.frontVol.pct ?? 0) >= 70 ? "elevated, which is good for rates desks" : "not unusually high"}.`;
+  }).catch(() => { if (alive()) $("#tcurve").textContent = ""; });
+
   api("/api/market", 5 * 60e3).then((m) => {
     if (!alive()) return;
     $("#pulse").innerHTML = m.series.map((s) => {
@@ -227,21 +244,23 @@ const CATS = [
 // Screener
 // ======================================================================
 const COLS = [
-  ["symbol", "Stock", "l"], ["label", "Signal", "l"], ["score", "Score"], ["discount", "Value gap"], ["upside", "Upside"],
+  ["symbol", "Stock", "l"], ["label", "Signal", "l"], ["score", "Score"], ["thesis", "Rates thesis"], ["nimChg", "NIM Δ 1y"], ["discount", "Value gap"], ["upside", "Upside"],
   ["sector3m", "3m: sector / own"], ["recMean", "Analysts"], ["rev90", "EPS rev. 90d"], ["roe", "ROE"], ["yield", "Yield"],
   ["valuation", "Multiple vs peers"], ["offHigh", "Off 52w high"], ["marketCapUsd", "Mkt cap"], ["price", "Price"], ["groupName", "Group", "l"],
 ];
-const DEFAULT_FILTERS = { ex: "All", tiers: ["Small", "Mid", "Large"], group: "All", sig: "All", minUp: "", text: "", sort: "score", dir: -1 };
+const DEFAULT_FILTERS = { ex: "All", tiers: ["Small", "Mid", "Large"], group: "All", sig: "All", lens: "All", minUp: "", text: "", sort: "score", dir: -1 };
+const LENSES = { All: () => true, "Fits rates thesis": (s) => s.thesisFit, "NIM widening": (s) => (s.nim?.chg1y ?? -1) > 0, "Dealers (FICC)": (s) => !!s.trading, "Banks": (s) => BANK_GROUPS.includes(s.group) };
 const valueGap = (s) => (s.metric === "pb" ? s.pbResid ?? s.pbDiscount : s.peDiscount);
 const partsTip = (p) => (p ? `Score parts (percentile): value ${p.value ?? "—"} · street ${p.street ?? "—"} · quality ${p.quality ?? "—"} · revisions ${p.revisions ?? "—"} · sector markdown ${p.macro ?? "—"}` : "");
 function screener(_, alive) {
   const f = { ...DEFAULT_FILTERS, ...store.get("filters", {}) };
   app.innerHTML = `
-    <div class="page-head"><div><h1>Screener</h1><div class="muted">Score is a 0–100 percentile: value for its returns vs peers (35%), estimate revisions (15%), analyst upside & rating (20%), quality within its group (15%) and how much of its recent drop came from its sector (15%). <b>Value gap</b> = how far below the P/B its ROE implies (banks, insurers, mREITs) or below peers' forward P/E (fee businesses).</div></div><div class="muted" id="count"></div></div>
+    <div class="page-head"><div><h1>Screener</h1><div class="muted"><b>Rates thesis</b> (0–100): for banks, how fast net interest margin is widening (and whether asset yields, not just cheaper deposits, are driving it); for dealers, FICC and equities trading growth and how the stock trades with rates volatility. ✓ = strong thesis fit that isn't a value trap. Score is a 0–100 percentile: value for its returns vs peers (35%), estimate revisions (15%), analyst upside & rating (20%), quality within its group (15%) and how much of its recent drop came from its sector (15%). <b>Value gap</b> = how far below the P/B its ROE implies (banks, insurers, mREITs) or below peers' forward P/E (fee businesses).</div></div><div class="muted" id="count"></div></div>
     <div class="filters">
       <label class="field">Exchange<select id="f-ex">${["All", "TSX", "NYSE"].map((v) => `<option ${f.ex === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <div class="field" role="group" aria-label="Market cap">Size<div class="chips">${["Micro", "Small", "Mid", "Large"].map((t) => `<button class="chip ${f.tiers.includes(t) ? "on" : ""}" data-tier="${t}" aria-pressed="${f.tiers.includes(t)}">${t}</button>`).join("")}</div></div>
       <label class="field">Peer group<select id="f-group"><option>All</option></select></label>
+      <label class="field">Lens<select id="f-lens">${Object.keys(LENSES).map((v) => `<option ${f.lens === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <label class="field">Signal<select id="f-sig">${["All", "Undervalued", "Watch", "Possible value trap", "Fairly valued"].map((v) => `<option ${f.sig === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
       <label class="field">Min upside %<input id="f-up" type="number" inputmode="numeric" value="${esc(f.minUp)}" style="width:90px"></label>
       <label class="field">Find<input id="f-text" type="text" value="${esc(f.text)}" placeholder="e.g. bank" style="width:140px"></label>
@@ -256,13 +275,13 @@ function screener(_, alive) {
     const groups = [...new Set(d.stocks.map((s) => s.groupName))].sort();
     $("#f-group").innerHTML = `<option>All</option>` + groups.map((g) => `<option ${f.group === g ? "selected" : ""}>${esc(g)}</option>`).join("");
     if (d.skipped?.length) $("#skipped").textContent = `Not quoted by Yahoo (delisted, renamed or acquired — remove from api/_lib/universe.js): ${d.skipped.join(", ")}`;
-    const val = (s, k) => k === "valuation" ? (s.metric === "pb" ? s.pb : s.forwardPE) : k === "discount" ? valueGap(s) : k === "recMean" ? (s.recMean == null ? null : -s.recMean) : s[k];
+    const val = (s, k) => k === "valuation" ? (s.metric === "pb" ? s.pb : s.forwardPE) : k === "discount" ? valueGap(s) : k === "recMean" ? (s.recMean == null ? null : -s.recMean) : k === "nimChg" ? s.nim?.chg1y ?? null : s[k];
     let rows = [];
     const draw = () => {
       store.set("filters", f);
       const t = f.text.trim().toLowerCase(), minUp = f.minUp === "" ? null : Number(f.minUp);
       rows = d.stocks.filter((s) => (f.ex === "All" || s.exchange === f.ex) && (!s.tier || f.tiers.includes(s.tier)) && (f.group === "All" || s.groupName === f.group)
-        && (f.sig === "All" || s.label === f.sig) && (minUp == null || (s.upside ?? -999) >= minUp) && (!t || `${s.symbol} ${s.name} ${s.groupName}`.toLowerCase().includes(t)));
+        && (f.sig === "All" || s.label === f.sig) && (LENSES[f.lens] || LENSES.All)(s) && (minUp == null || (s.upside ?? -999) >= minUp) && (!t || `${s.symbol} ${s.name} ${s.groupName}`.toLowerCase().includes(t)));
       rows.sort((a, b) => { const A = val(a, f.sort), B = val(b, f.sort); if (A == null) return 1; if (B == null) return -1; return (typeof A === "string" ? A.localeCompare(B) : A - B) * f.dir; });
       $("#count").textContent = `${rows.length} of ${d.stocks.length} stocks · data ${ago(d.asOf)}`;
       $("#tbl").innerHTML = rows.length ? `<table class="sticky"><thead><tr>${COLS.map(([k, n, a]) => `<th scope="col" class="${a || ""} ${f.sort === k ? "sorted" : ""}" aria-sort="${f.sort === k ? (f.dir > 0 ? "ascending" : "descending") : "none"}"><button data-sort="${k}">${n}${f.sort === k ? (f.dir > 0 ? " ↑" : " ↓") : ""}</button></th>`).join("")}</tr></thead><tbody>${rows.map((s) => {
@@ -271,6 +290,8 @@ function screener(_, alive) {
         <td class="l">${starBtn(s.symbol, s.price)}${link(s.symbol, `<b>${esc(s.symbol)}</b> <span class="name">${esc(s.name)}</span>`)}</td>
         <td class="l">${label(s.label)}</td>
         <td class="num" title="${esc(partsTip(s.parts))}"><b>${s.score ?? "—"}</b></td>
+        <td class="num" title="${esc((s.thesisWhy || []).join(" · "))}">${s.thesis != null ? `${s.thesis} <span class="faint">${esc(s.thesisType)}</span>${s.thesisFit ? " ✓" : ""}` : "—"}</td>
+        <td class="num ${cls(s.nim?.chg1y)}">${s.nim ? bp(s.nim.chg1y) : "—"}</td>
         <td class="num ${cls(gap)}" title="${s.metric === "pb" && s.impliedPB ? `P/B ${s.pb}× vs ${s.impliedPB}× implied by ${fix(s.roeF ?? s.roe, 1)}% ROE` : ""}">${pct(gap, 0)}</td>
         <td class="num ${cls(s.upside)}">${pct(s.upside, 0)}</td>
         <td class="num"><span class="${cls(s.sector3m)}">${pct(s.sector3m, 0)}</span> / <span class="${cls(s.own3m)}">${pct(s.own3m, 0)}</span></td>
@@ -286,7 +307,7 @@ function screener(_, alive) {
     };
     const reset = () => {
       Object.assign(f, DEFAULT_FILTERS, { tiers: [...DEFAULT_FILTERS.tiers] });
-      $("#f-ex").value = "All"; $("#f-group").value = "All"; $("#f-sig").value = "All"; $("#f-up").value = ""; $("#f-text").value = "";
+      $("#f-ex").value = "All"; $("#f-group").value = "All"; $("#f-sig").value = "All"; $("#f-lens").value = "All"; $("#f-up").value = ""; $("#f-text").value = "";
       $$("[data-tier]").forEach((b) => { const on = f.tiers.includes(b.dataset.tier); b.classList.toggle("on", on); b.setAttribute("aria-pressed", on); });
       draw();
     };
@@ -295,6 +316,7 @@ function screener(_, alive) {
     on("#f-ex", "change", (e) => { f.ex = e.target.value; draw(); });
     on("#f-group", "change", (e) => { f.group = e.target.value; draw(); });
     on("#f-sig", "change", (e) => { f.sig = e.target.value; draw(); });
+    on("#f-lens", "change", (e) => { f.lens = e.target.value; draw(); });
     on("#f-up", "input", (e) => { f.minUp = e.target.value; draw(); });
     on("#f-text", "input", (e) => { f.text = e.target.value; draw(); });
     on("#f-clear", "click", reset);
@@ -308,8 +330,8 @@ function screener(_, alive) {
       if (e.target.closest("[data-clear]")) reset();
     });
     on("#f-csv", "click", () => {
-      const head = ["Symbol", "Name", "Exchange", "Group", "Signal", "Score", "Value gap %", "Analyst upside %", "Sector 3m %", "Own 3m %", "Rating", "Analysts", "EPS rev 90d %", "ROE % (fwd)", "Yield %", "P/B", "ROE-implied P/B", "Peer P/B", "Fwd P/E", "Peer P/E", "Justified value", "Off 52w high %", "Market cap (USD)", "Price", "Currency", "Most sensitive to", "Value-trap flags"];
-      const lines = rows.map((s) => [s.symbol, s.name, s.exchange, s.groupName, s.label, s.score, valueGap(s), s.upside, s.sector3m, s.own3m, s.rating, s.analysts, s.rev90, s.roeF ?? s.roe, s.yield, s.pb, s.impliedPB, s.peerPB, s.forwardPE, s.peerPE, s.fairValue, s.offHigh, s.marketCapUsd, s.price, s.currency, s.sens?.name, s.risks.join("; ")]);
+      const head = ["Symbol", "Name", "Exchange", "Group", "Signal", "Score", "Value gap %", "Analyst upside %", "Sector 3m %", "Own 3m %", "Rating", "Analysts", "EPS rev 90d %", "ROE % (fwd)", "Yield %", "P/B", "ROE-implied P/B", "Peer P/B", "Fwd P/E", "Peer P/E", "Justified value", "Off 52w high %", "Market cap (USD)", "Price", "Currency", "Most sensitive to", "Value-trap flags", "Rates thesis score", "Thesis type", "NIM change 1y (bp)", "NII y/y %", "FICC y/y %", "Thesis notes"];
+      const lines = rows.map((s) => [s.symbol, s.name, s.exchange, s.groupName, s.label, s.score, valueGap(s), s.upside, s.sector3m, s.own3m, s.rating, s.analysts, s.rev90, s.roeF ?? s.roe, s.yield, s.pb, s.impliedPB, s.peerPB, s.forwardPE, s.peerPE, s.fairValue, s.offHigh, s.marketCapUsd, s.price, s.currency, s.sens?.name, s.risks.join("; "), s.thesis, s.thesisType, s.nim?.chg1y, s.nim?.niiYoY, s.trading?.ficcYoY ?? s.trading?.marketsYoY, (s.thesisWhy || []).join("; ")]);
       const csv = [head, ...lines].map((r) => r.map((v) => (v == null ? "" : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : v)).join(",")).join("\n");
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" })); a.download = `kcm-financials-screen-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
     });
@@ -423,6 +445,7 @@ async function research(sym, alive) {
       ["Why it fell (3m)", ver, isNum(row.sector3m) ? `sector ${pct(row.sector3m, 0)} · own ${pct(row.own3m, 0)}${c && !c.error && c.macroShare != null ? ` · news ${c.macroShare}% macro` : ""}` : "no price history", ""],
       ["EPS revisions 90d", pct(row.rev90, 0), "next year's estimate", cls(row.rev90)],
       ["Value-trap flags", String(row.risks.length), row.risks.length ? "see the check below" : "none from the numbers", row.risks.length >= 2 ? "down" : row.risks.length ? "warn" : "up"],
+      ...(row.thesis != null ? [["Rates thesis", `${row.thesis}${row.thesisFit ? " ✓" : ""}`, row.thesisType === "NIM" && row.nim ? `NIM ${bp(row.nim.chg1y)} · NII ${pct(row.nim.niiYoY, 0)} y/y` : row.trading ? `FICC ${pct(row.trading.ficcYoY ?? row.trading.marketsYoY, 0)} · equities ${pct(row.trading.eqYoY, 0)}` : "", row.thesisFit ? "up" : ""]] : []),
       ["Most sensitive to", row.sens ? esc(row.sens.name) : "—", row.sens ? `correlation ${row.sens.corr > 0 ? "+" : ""}${row.sens.corr}` : "no strong single factor", ""],
     ].map(([k, v2, sub, c2]) => `<div class="cell"><div class="k">${k}</div><div class="v ${c2}">${v2}</div><div class="s">${sub}</div></div>`).join("");
   };
@@ -532,6 +555,7 @@ async function research(sym, alive) {
       ${c.reason ? `<p style="margin:0 0 10px">${esc(c.reason)}</p>` : ""}
       ${c.drivers?.length ? `<div class="chips" style="margin-bottom:10px">${c.drivers.map(catChip).join("")}</div>` : ""}
       ${row?.why?.length ? `<ul class="bullets" style="margin-bottom:10px">${row.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
+      ${row?.thesisWhy?.length ? `<div class="faint" style="font-size:12px;margin-bottom:2px">Rates thesis${row.thesisFit ? " (fits)" : ""}</div><ul class="bullets" style="margin-bottom:10px">${row.thesisWhy.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : ""}
       <div class="chips" style="margin-bottom:6px" id="tone" role="group" aria-label="Filter headlines"><button class="chip on" data-tone="all" aria-pressed="true">All ${c.news.length}</button><button class="chip" data-tone="negative" aria-pressed="false">Negative ${c.negative}</button><button class="chip" data-tone="premium" aria-pressed="false">Bloomberg, Reuters & major press</button></div>
       <ul class="news" id="symnews"></ul>
       <button class="link" id="more" style="margin-top:6px"></button>
@@ -562,6 +586,7 @@ async function research(sym, alive) {
       row ? `Valuation: P/B ${x(row.pb, 2)} (peers ${x(row.peerPB, 2)}${row.impliedPB ? `, ROE-implied ${x(row.impliedPB, 2)}` : ""}) · fwd P/E ${x(row.forwardPE)} (peers ${x(row.peerPE)}) · fwd ROE ${pct(row.roeF ?? row.roe, 1, false)} vs ~${fix(row.coe, 1)}% cost of equity · yield ${pct(row.yield, 1, false)}${row.fairValue ? ` · justified-P/B value ${fix(row.fairValue)}` : ""}` : "",
       row && isNum(row.sector3m) ? `Why it fell: 3-month move ${pct(row.ret3m, 0)} = sector ${pct(row.sector3m, 0)} + own ${pct(row.own3m, 0)}${row.sens ? `; most sensitive to ${row.sens.name}` : ""}${vv?.newsSays ? `; ${c.macroShare}% of negative themed headlines are macro` : ""}.` : "",
       row?.why?.length ? `Why it screens cheap:\n${row.why.map((w) => `- ${w}`).join("\n")}` : "",
+      row?.thesisWhy?.length ? `Rates thesis (${row.thesis}/100, ${row.thesisType}):\n${row.thesisWhy.map((w) => `- ${w}`).join("\n")}` : "",
       !c.error && c.reason ? `News: ${c.reason}` : "",
       row?.risks?.length ? `Value-trap flags:\n${row.risks.map((w) => `- ${w}`).join("\n")}` : "",
       ta.value.trim() ? `My notes:\n${ta.value.trim()}` : "",

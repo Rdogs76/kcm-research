@@ -91,7 +91,7 @@ export function metrics(s) {
   };
 }
 
-async function one(symbol) {
+export async function one(symbol) {
   let raw, src = "yahoo";
   try { raw = await direct(symbol); if (!Object.keys(raw).length) throw new Error("empty"); }
   catch { raw = await viaLib(symbol); src = "yahoo-finance2"; }

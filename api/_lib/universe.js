@@ -84,4 +84,6 @@ export const FACTORS = [
   { symbol: "HYG", name: "High-yield credit", label: "credit-sensitive" },
   { symbol: "CL=F", name: "Crude oil", label: "oil-sensitive" },
   { symbol: "USDCAD=X", name: "USD/CAD", label: "CAD-sensitive" },
+  { symbol: "^IRX", name: "3-mo T-bill yield (front end)", label: "front-end-sensitive", diff: true },
+  { symbol: "^MOVE", name: "Rates volatility (MOVE)", label: "volatility-sensitive", diff: true },
 ];
