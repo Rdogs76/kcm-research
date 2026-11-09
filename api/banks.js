@@ -94,7 +94,7 @@ export function nimSeries(byDate) {
 
 const sum = (xs) => (xs.length && xs.every((x) => x != null) ? xs.reduce((a, b) => a + b, 0) : null);
 
-export function metrics(s, policy) {
+export function metrics(s, policy, region = "US") {
   if (!s.length) return null;
   const last = s.at(-1), q1 = s.at(-2);
   // A "1-year" comparison only counts if the dates really are about a year apart.
@@ -119,8 +119,10 @@ export function metrics(s, policy) {
     if (Math.abs(policyChg) >= 25) depBeta = r2(((last.depCost - base.depCost) * 100) / policyChg);
   }
   const ageDays = Math.round((Date.now() - Date.parse(last.date)) / DAY);
+  // US banks report ~2-3 weeks after quarter end, Canadian banks ~4-5 weeks; Yahoo adds a lag on top.
+  const lagging = ageDays > (region === "CA" ? 125 : 100);
   return {
-    quarter: last.date, quarters: s.length, ageDays, stale: ageDays > 135,
+    quarter: last.date, quarters: s.length, ageDays, lagging, stale: ageDays > 200,
     nim: r2(last.nim),
     nimChg1q: q1 && last.gap >= 80 && last.gap <= 100 ? bp(last, q1, "nim") : null,
     nimChg4q: q4 ? bp(last, q4, "nim") : null,
@@ -149,7 +151,7 @@ export async function one(symbol, policy) {
   catch { raw = await viaLib(symbol); src = "yahoo-finance2"; }
   const ccy = raw.ccy || (symbol.endsWith(".TO") ? "CAD" : "USD");
   const p = policy ?? (await policyRates().catch(() => ({})));
-  const m = metrics(nimSeries(raw.byDate), p[symbol.endsWith(".TO") ? "CAD" : "USD"]);
+  const m = metrics(nimSeries(raw.byDate), p[symbol.endsWith(".TO") ? "CAD" : "USD"], symbol.endsWith(".TO") ? "CA" : "US");
   if (!m) throw new Error("no net interest income data");
   return { ...m, finCcy: ccy, src };
 }

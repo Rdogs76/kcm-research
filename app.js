@@ -324,9 +324,11 @@ const DEFAULT_FILTERS = { ex: "All", tiers: ["Small", "Mid", "Large"], group: "A
 const LENSES = { All: () => true, "Rates thesis match": (s) => s.thesisFit, "NIM widening": (s) => (s.nim?.chg1y ?? -1) > 0, "Dealers (FICC)": (s) => !!s.trading, "Banks": (s) => BANK_GROUPS.includes(s.group), "Data to check": (s) => (s.dataFlags?.length ?? 0) > 0 };
 const SIGNALS = ["All", "Screens cheap", "Watch", "Value-trap risk", "In line with peers"];
 const thesisCell = (s) => {
-  if (s.thesisNim != null) return `#${s.nimRank} of ${s.nimOf}${s.thesisFit ? " ✓" : ""} <span class="faint">NIM</span>`;
-  if (s.thesisTrade != null) return `${s.thesisTrade}${s.thesisFit ? " ✓" : ""} <span class="faint">of ${s.tradeOf} dealers</span>`;
-  return "—";
+  const nimHit = s.thesisFit && s.nimOk && (s.thesisNim ?? 0) >= 65, tradeHit = s.thesisFit && !nimHit;
+  const parts = [];
+  if (s.thesisNim != null) parts.push(`#${s.nimRank}/${s.nimOf}${nimHit ? " ✓" : ""} <span class="faint">NIM${s.nim?.lagging ? " ⚠" : ""}</span>`);
+  if (s.thesisTrade != null) parts.push(`${s.thesisTrade}${tradeHit ? " ✓" : ""} <span class="faint">desks</span>`);
+  return parts.join(" · ") || "—";
 };
 const valueGap = (s) => (s.metric === "pb" ? s.pbResid ?? s.pbDiscount : s.peDiscount);
 const partsTip = (p, miss) => (p ? `Percentile parts: value ${p.value ?? "—"} · street ${p.street ?? "—"} · quality ${p.quality ?? "—"} · revisions ${p.revisions ?? "—"} · sector markdown ${p.macro ?? "—"}${miss?.length ? ` · missing (counted as 50): ${miss.join(", ")}` : ""}` : "");
@@ -630,7 +632,7 @@ async function research(sym, alive) {
       if (!alive()) return;
       if (n.error || !n.series?.length) { $("#nimbody").innerHTML = `<div class="empty">No quarterly statements from Yahoo for ${esc(sym)}.</div>`; return; }
       const span = n.nimChg4q != null ? "1 year" : `${Math.round((n.spanDays || 0) / 30)} months`;
-      $("#nimbody").innerHTML = `<div class="stats" style="margin-bottom:6px"><span>Latest quarter <b>${esc(n.quarter)}</b>${n.stale ? ` <span class="down">(a newer quarter is likely out)</span>` : ""}</span><span>NIM proxy <b>${fix(n.nim)}%</b></span><span>Last quarter <b class="${cls(n.nimChg1q)}">${bp(n.nimChg1q)}</b></span><span>${span} <b class="${cls(n.nimChg4q ?? n.nimChgSpan)}">${bp(n.nimChg4q ?? n.nimChgSpan)}</b></span><span>Asset yield <b class="${cls(n.yieldChg)}">${bp(n.yieldChg)}</b></span><span>Total funding cost <b class="${cls(n.costChg == null ? null : -n.costChg)}">${bp(n.costChg)}</b></span><span>Deposit cost <b class="${cls(n.depCostChg == null ? null : -n.depCostChg)}">${bp(n.depCostChg)}</b></span><span>${term("beta", "Deposit β")} <b>${fix(n.depBeta)}</b>${n.policyChg != null ? ` <span class="faint">vs ${bp(n.policyChg)} policy</span>` : ""}</span></div>
+      $("#nimbody").innerHTML = `<div class="stats" style="margin-bottom:6px"><span>Latest quarter <b>${esc(n.quarter)}</b>${n.stale || n.lagging ? ` <span class="down">(a newer quarter is likely out; Yahoo hasn't loaded it)</span>` : ""}</span><span>NIM proxy <b>${fix(n.nim)}%</b></span><span>Last quarter <b class="${cls(n.nimChg1q)}">${bp(n.nimChg1q)}</b></span><span>${span} <b class="${cls(n.nimChg4q ?? n.nimChgSpan)}">${bp(n.nimChg4q ?? n.nimChgSpan)}</b></span><span>Asset yield <b class="${cls(n.yieldChg)}">${bp(n.yieldChg)}</b></span><span>Total funding cost <b class="${cls(n.costChg == null ? null : -n.costChg)}">${bp(n.costChg)}</b></span><span>Deposit cost <b class="${cls(n.depCostChg == null ? null : -n.depCostChg)}">${bp(n.depCostChg)}</b></span><span>${term("beta", "Deposit β")} <b>${fix(n.depBeta)}</b>${n.policyChg != null ? ` <span class="faint">vs ${bp(n.policyChg)} policy</span>` : ""}</span></div>
         <div class="stats" style="margin-bottom:6px"><span>${term("rotce", "ROTCE")} <b>${pct(n.rotce, 1, false)}</b></span><span>TCE / assets <b>${pct(n.tceRatio, 1, false)}</b> <span class="faint">(capital proxy, not CET1)</span></span><span>Capital returned (4q) <b>${pct(row.shYield, 1, false)}</b> <span class="faint">of market cap</span></span><span>Payout incl. buybacks <b>${pct(n.totalPayout, 0, false)}</b></span><span>Provisions y/y <b class="${cls(n.provYoY == null ? null : -n.provYoY)}">${pct(n.provYoY, 0)}</b></span><span>AOCI <b class="${cls(n.aociToTbv)}">${pct(n.aociToTbv, 1)}</b> <span class="faint">of tangible book</span></span><span>NII y/y <b class="${cls(n.niiYoY)}">${pct(n.niiYoY, 0)}</b></span></div><div id="nimchart"></div>
         <div class="faint" style="font-size:12px">From Yahoo Finance quarterly statements, annualised by days in the quarter, as a share of average total assets. Reported NIM uses earning assets and runs higher; total funding cost includes repo and debt, so read it with care for large dealers. AOCI is unrealised gains/losses outside earnings (mostly bond holdings); held-to-maturity losses aren't included.</div>`;
       const t = (dd) => Date.parse(dd);
@@ -842,7 +844,7 @@ function rates(_, alive) {
         ${rows.map((x2) => { const s = by[x2.symbol];
           return `<tr><td class="l">${starBtn(x2.symbol, s?.price)}${link(x2.symbol, `<b>${esc(x2.symbol)}</b> <span class="name">${esc(s?.name || x2.groupName)}</span>`)}${s?.thesisFit ? ` <span class="label undervalued" title="Margin widening in absolute terms, ranks well, and not a value-trap risk">Thesis match</span>` : ""}</td>
           <td class="num"><b>${x2.nimRank ?? "—"}</b><span class="faint">/${x2.nimOf}</span>${x2.streak === 2 ? ` <span class="faint" title="Widened two quarters in a row">↑↑</span>` : ""}</td>
-          <td class="num">${esc((x2.quarter || "").slice(0, 7))}${x2.stale ? ` <span class="warn" title="Latest statements on Yahoo are ${x2.ageDays} days old">⚠</span>` : ""}</td>
+          <td class="num">${esc((x2.quarter || "").slice(0, 7))}${x2.stale || x2.lagging ? ` <span class="warn" title="Yahoo's latest statements are ${x2.ageDays} days old; the bank has likely reported a newer quarter">⚠</span>` : ""}</td>
           <td class="num ${cls(x2.nimChg1q)}">${bp(x2.nimChg1q)}</td>
           <td class="num ${cls(x2.nimChg4q ?? x2.nimChgSpan)}" title="${x2.nimChg4q == null ? `Over ${Math.round((x2.spanDays || 0) / 30)} months (a full year isn't available)` : ""}">${bp(x2.nimChg4q ?? x2.nimChgSpan)}${x2.nimChg4q == null ? "*" : ""}</td>
           <td class="num ${cls(x2.yieldChg)}">${bp(x2.yieldChg)}</td><td class="num ${cls(x2.costChg == null ? null : -x2.costChg)}">${bp(x2.costChg)}</td>

@@ -367,7 +367,7 @@ export function build(q, det, hist, ctx = {}) {
   const nimN = nimScores(nimList);
   banks.forEach((s, i) => {
     const n = nimData[s.symbol], sc = nimList[i];
-    s.nim = { level: n.nim, chg1q: n.nimChg1q, chg1y: n.nimChg4q ?? n.nimChgSpan, full: n.nimChg4q != null, spanDays: n.spanDays, yieldChg: n.yieldChg, costChg: n.costChg, depCostChg: n.depCostChg, depBeta: n.depBeta, policyChg: n.policyChg, niiYoY: n.niiYoY, streak: n.streak, quarter: n.quarter, stale: n.stale, rotce: n.rotce, tceRatio: n.tceRatio, provYoY: n.provYoY, provToPpnr: n.provToPpnr, aociToTbv: n.aociToTbv, totalPayout: n.totalPayout };
+    s.nim = { level: n.nim, chg1q: n.nimChg1q, chg1y: n.nimChg4q ?? n.nimChgSpan, full: n.nimChg4q != null, spanDays: n.spanDays, yieldChg: n.yieldChg, costChg: n.costChg, depCostChg: n.depCostChg, depBeta: n.depBeta, policyChg: n.policyChg, niiYoY: n.niiYoY, streak: n.streak, quarter: n.quarter, stale: n.stale, lagging: n.lagging, rotce: n.rotce, tceRatio: n.tceRatio, provYoY: n.provYoY, provToPpnr: n.provToPpnr, aociToTbv: n.aociToTbv, totalPayout: n.totalPayout };
     s.thesisNim = sc.nimScore; s.nimRank = sc.nimRank; s.nimOf = nimN;
     const tw = [];
     const span = n.nimChg4q != null ? "the past year" : `${Math.round((n.spanDays || 0) / 30)} months`;
@@ -380,7 +380,8 @@ export function build(q, det, hist, ctx = {}) {
     }
     if (n.depBeta != null) tw.push(`Implied deposit beta ${n.depBeta.toFixed(2)}: deposit costs moved ${n.depCostChg >= 0 ? "+" : ""}${n.depCostChg} bp against a ${n.policyChg >= 0 ? "+" : ""}${n.policyChg} bp change in the average policy rate`);
     if (n.niiYoY != null) tw.push(`Net interest income ${n.niiYoY >= 0 ? "up" : "down"} ${Math.abs(n.niiYoY).toFixed(0)}% y/y`);
-    if (n.stale) tw.push(`Latest statements on Yahoo are for the quarter ended ${n.quarter}; a newer quarter has likely been reported`);
+    if (n.stale) tw.push(`Latest statements on Yahoo are for the quarter ended ${n.quarter}, more than two quarters old, so this is left out of the thesis match`);
+    else if (n.lagging) tw.push(`Yahoo's latest statements are for the quarter ended ${n.quarter}; the bank has likely reported a newer quarter, so check its latest release`);
     s.thesisWhy = tw;
     s.nimOk = c1 != null && c1 > 0 && !n.stale;
   });
