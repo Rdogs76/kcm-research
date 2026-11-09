@@ -74,6 +74,7 @@ const GLOSSARY = {
   bp: "Basis point: 0.01 percentage point. 25 bp = 0.25%.",
   screen: "Labels and scores are percentile ranks within this 140-stock universe, built from Yahoo Finance data. They are screening output, not recommendations; verify with filings.",
   ri: "Residual-income value: book value today plus the present value of future returns above the cost of equity, with ROE fading to the cost of equity over 10 years.",
+  cet1: "Common Equity Tier 1 ratio: the bank's highest-quality capital ÷ risk-weighted assets. Room above the regulatory requirement is what funds buybacks and growth.",
   gap: "Value gap: how far the multiple sits below what peers trade at for the same return (P/TBV or P/B vs ROTCE/ROE regression), or below peers' forward P/E.",
 };
 const term = (k, text) => `<button type="button" class="term" data-term="${k}" aria-expanded="false">${esc(text)}</button>`;
@@ -141,16 +142,20 @@ function lineChart(el, points, opts = {}) {
 const hbar = (name, val, max, txt, kind = "") => `<div class="hbar"><span title="${esc(name)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(name)}</span><div class="track"><div class="fill ${kind}" style="width:${Math.min(100, (Math.abs(val ?? 0) / (max || 1)) * 100)}%"></div></div><span class="num" style="text-align:right">${txt}</span></div>`;
 
 // ---------- Router ----------
-const TABS = ["overview", "screener", "research", "rates", "catalysts", "watchlist", "calendar"];
+const TABS = ["overview", "screener", "research", "rates", "catalysts", "watchlist", "calendar", "compare"];
 let current = null;
 function route() {
-  const [tab = "overview", arg] = location.hash.slice(1).split("/");
+  const raw = location.hash.slice(1);
+  const [path, qs = ""] = raw.split("?");
+  const [tab = "overview", arg] = path.split("/");
   const t = TABS.includes(tab) ? tab : "overview";
   $$("nav.tabs a").forEach((a) => a.classList.toggle("on", a.getAttribute("href") === "#" + t));
-  current = t + (arg || "");
+  if (t === "screener" && qs) { store.set("filters", { ...DEFAULT_FILTERS, ...queryToFilters(qs) }); history.replaceState(null, "", "#screener"); }
+  current = t === "screener" ? "screener" : raw;
   const token = current;
   window.scrollTo(0, 0);
-  ({ overview, screener, research, rates, catalysts, watchlist, calendar })[t](arg ? decodeURIComponent(arg).toUpperCase() : null, () => token === current);
+  ({ overview, screener, research, rates, catalysts, watchlist, calendar, compare })[t](arg ? decodeURIComponent(arg).toUpperCase() : null, () => token === current);
+  renderCompareBar();
 }
 window.addEventListener("hashchange", route);
 const go = (sym) => { location.hash = `#research/${encodeURIComponent(sym)}`; };
@@ -162,6 +167,102 @@ app.addEventListener("click", (e) => {
   if (go2 && !e.target.closest("a, button")) go(go2.dataset.go);
 });
 const starBtn = (s, price) => { const on = watch.has(s); return `<button class="star ${on ? "on" : ""}" data-star="${esc(s)}" data-price="${price ?? ""}" aria-pressed="${on}" title="${on ? "Remove from" : "Add to"} watchlist">${on ? "★" : "☆"}</button>`; };
+
+// ======================================================================
+// Compare (up to 4 names side by side)
+// ======================================================================
+const cmp = {
+  all: () => store.get("compare", []),
+  has: (s) => cmp.all().includes(s),
+  toggle(s) { let l = cmp.all(); l = l.includes(s) ? l.filter((x2) => x2 !== s) : [...l, s].slice(-4); store.set("compare", l); renderCompareBar(); return l.includes(s); },
+  clear() { store.set("compare", []); renderCompareBar(); },
+};
+const cmpBtn = (s) => { const on = cmp.has(s); return `<button class="cmp ${on ? "on" : ""}" data-cmp="${esc(s)}" aria-pressed="${on}" title="${on ? "Remove from" : "Add to"} compare">${on ? "✓" : "+"}</button>`; };
+function renderCompareBar() {
+  let bar = $("#cmpbar");
+  const l = cmp.all();
+  if (!l.length || location.hash.startsWith("#compare")) { bar?.remove(); return; }
+  if (!bar) { bar = document.createElement("div"); bar.id = "cmpbar"; bar.className = "cmpbar no-print"; document.body.appendChild(bar); }
+  bar.innerHTML = `<span>Compare: <b>${l.map(esc).join(", ")}</b></span><a class="btn" href="#compare/${l.map(encodeURIComponent).join(",")}">Compare ${l.length} →</a><button class="btn ghost" data-cmpclear>Clear</button>`;
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-cmp]");
+  if (b) { e.preventDefault(); e.stopPropagation(); const on = cmp.toggle(b.dataset.cmp); b.classList.toggle("on", on); b.textContent = on ? "✓" : "+"; b.setAttribute("aria-pressed", on); return; }
+  if (e.target.closest("[data-cmpclear]")) { cmp.clear(); if (location.hash.startsWith("#compare")) location.hash = "#screener"; }
+});
+
+function compare(arg, alive) {
+  const syms = (arg || cmp.all().join(",")).split(",").map((x2) => x2.trim().toUpperCase()).filter(Boolean).slice(0, 4);
+  if (syms.length) store.set("compare", syms);
+  app.innerHTML = `<div class="page-head"><div><h1>Compare</h1><div class="muted">Up to four names side by side. Add names with the <b>+</b> button in the screener, on research pages or in the watchlist.</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap" class="no-print"><button class="btn ghost" id="cmpShare">Copy link</button><button class="btn ghost" id="cmpPrint">Print / PDF</button><button class="btn ghost" data-cmpclear>Clear</button></div></div>
+    <div id="cmpbody">${syms.length ? skel(8) : `<div class="card empty">Nothing to compare yet. Use <b>+</b> next to any stock in the <a href="#screener">screener</a>.</div>`}</div>
+    <div class="print-only disclaimer" id="cmpFoot"></div>`;
+  $("#cmpShare").addEventListener("click", async (e) => { try { await navigator.clipboard.writeText(location.href.split("#")[0] + `#compare/${syms.join(",")}`); e.target.textContent = "Link copied"; } catch { e.target.textContent = "Couldn't copy"; } });
+  $("#cmpPrint").addEventListener("click", () => window.print());
+  if (!syms.length) return;
+  screen().then((d) => {
+    if (!alive()) return;
+    $("#cmpFoot").textContent = disclosure(d.asOf);
+    const rows = syms.map((s) => d.stocks.find((r) => r.symbol === s) || { symbol: s, missingRow: true });
+    const val = (s, f) => (s.missingRow ? "<span class='faint'>not in universe</span>" : f(s));
+    const lines = [
+      ["Signal", (s) => label(s.label)],
+      ["Percentile in screen", (s) => `${s.score ?? "—"}${s.missing?.length ? "*" : ""}`],
+      ["Group", (s) => esc(s.groupName)],
+      ["Market cap (USD)", (s) => cap(s.marketCapUsd)],
+      ["Price", (s) => money(s.price, s.currency)],
+      ["Multiple", (s) => (s.metric === "pb" ? `${bookLbl(s)} ${x(s.pb, 2)}` : `Fwd P/E ${x(s.forwardPE)}`)],
+      ["Peer / peer-implied", (s) => (s.metric === "pb" ? `${x(s.peerPB, 2)} / ${x(s.impliedPB, 2)}` : x(s.peerPE))],
+      ["Value gap", (s) => `<span class="${cls(valueGap(s))}">${pct(valueGap(s), 0)}</span>`],
+      ["ROE / ROTCE", (s) => pct(s.roeF ?? s.roe, 1, false)],
+      ["Cost of equity", (s) => pct(s.coe, 1, false)],
+      ["Residual-income value", (s) => (s.ri?.sane ? `${fix(s.ri.value)} <span class="${cls((s.ri.value / s.price - 1) * 100)}">${pct((s.ri.value / s.price - 1) * 100, 0)}</span>` : "—")],
+      ["Dividend yield", (s) => pct(s.yield, 1, false)],
+      ["Capital returned (4q)", (s) => pct(s.shYield, 1, false)],
+      ["Analyst upside", (s) => `<span class="${cls(s.upside)}">${pct(s.upside, 0)}</span>`],
+      ["Consensus", (s) => `${esc(s.rating || "—")}${s.counts ? ` <span class="faint">${s.counts.buy}/${s.counts.hold}/${s.counts.sell}</span>` : ""}`],
+      ["EPS revisions 90d", (s) => `<span class="${cls(s.rev90)}">${pct(s.rev90, 0)}</span>`],
+      ["3m move: sector / own", (s) => `${pct(s.sector3m, 0)} / ${pct(s.own3m, 0)}`],
+      ["Off 52-week high", (s) => pct(s.offHigh, 0)],
+      ["Most sensitive to", (s) => esc(s.sens?.name || "—")],
+      ["NIM change (1y)", (s) => (s.nim ? `<span class="${cls(s.nim.chg1y)}">${bp(s.nim.chg1y)}</span>${s.nim.lagging ? " ⚠" : ""}` : "—")],
+      ["Deposit beta", (s) => fix(s.nim?.depBeta)],
+      ["CET1 (vs requirement)", (s) => (s.hand?.cet1 != null ? `${s.hand.cet1}%${s.hand.cet1Req != null ? ` <span class="faint">vs ${s.hand.cet1Req}%</span>` : ""}` : "—")],
+      ["NII for +100 / −100 bp", (s) => (s.hand?.niiPctUp != null ? `${pct(s.hand.niiPctUp, 1)} / ${pct(s.hand.niiPctDn, 1)}` : "—")],
+      ["Combined ratio (y/y)", (s) => (s.hand?.cr != null ? `${s.hand.cr}% <span class="${cls(s.hand.crChg == null ? null : -s.hand.crChg)}">${s.hand.crChg != null ? `${s.hand.crChg > 0 ? "+" : ""}${s.hand.crChg}` : ""}</span>` : "—")],
+      ["FICC / markets y/y", (s) => (s.trading ? pct(s.trading.ficcYoY ?? s.trading.marketsYoY, 0) : "—")],
+      ["Rates thesis", (s) => thesisCell(s)],
+      ["Red flags", (s) => (s.risks?.length ? s.risks.map(esc).join("<br>") : "<span class='faint'>none</span>")],
+      ["Data checks", (s) => (s.dataFlags?.length ? `<span class="warn">${s.dataFlags.map(esc).join("<br>")}</span>` : "<span class='faint'>ok</span>")],
+    ];
+    $("#cmpbody").innerHTML = `<div class="table-wrap" style="max-height:none"><table class="cmp-table"><thead><tr><th scope="col" class="l">Data as of ${ago(d.asOf)}</th>${rows.map((s) => `<th scope="col">${link(s.symbol, `<b>${esc(s.symbol)}</b>`)} ${cmpBtn(s.symbol)}<div class="faint" style="font-weight:400">${esc(s.name || "")}</div></th>`).join("")}</tr></thead>
+      <tbody>${lines.map(([k, f]) => `<tr style="cursor:default"><th scope="row" class="l muted">${k}</th>${rows.map((s) => `<td>${val(s, f)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
+      <div class="faint" style="font-size:12px;margin-top:8px">* some factors missing and counted as neutral. CET1, NII sensitivity and combined ratios are entered by hand from company releases (see each research page for the source).</div>`;
+  }).catch((e) => { if (alive()) $("#cmpbody").innerHTML = errBox(e); });
+}
+
+// ======================================================================
+// Saved and shareable screens
+// ======================================================================
+const screens = {
+  all: () => store.get("screens", []),
+  save(name, f) { const l = screens.all().filter((x2) => x2.name !== name); l.push({ name, f: { ...f } }); store.set("screens", l.slice(-12)); },
+  remove(name) { store.set("screens", screens.all().filter((x2) => x2.name !== name)); },
+};
+const FILTER_KEYS = ["ex", "group", "sig", "lens", "minUp", "text", "sort", "dir"];
+function filtersToQuery(f) {
+  const q = new URLSearchParams();
+  for (const k of FILTER_KEYS) if (f[k] !== DEFAULT_FILTERS[k] && f[k] !== "" && f[k] != null) q.set(k, f[k]);
+  if (f.tiers.join(",") !== DEFAULT_FILTERS.tiers.join(",")) q.set("tiers", f.tiers.join(","));
+  return q.toString();
+}
+function queryToFilters(qs) {
+  const q = new URLSearchParams(qs || ""), f = {};
+  for (const k of FILTER_KEYS) if (q.has(k)) f[k] = k === "dir" ? Number(q.get(k)) || -1 : q.get(k);
+  if (q.has("tiers")) f.tiers = q.get("tiers").split(",").filter((t) => ["Micro", "Small", "Mid", "Large"].includes(t));
+  return f;
+}
 
 // ======================================================================
 // Overview
@@ -349,8 +450,11 @@ function screener(_, alive) {
       <label class="field">Find<input id="f-text" type="text" value="${esc(f.text)}" placeholder="e.g. bank" style="width:140px"></label>
       <button class="btn ghost" id="f-clear">Clear filters</button>
       <button class="btn ghost" id="f-csv" title="Download the filtered list as CSV">Export CSV</button>
+      <button class="btn ghost" id="f-save">Save screen</button>
+      <button class="btn ghost" id="f-share" title="Copy a link that opens this exact screen">Copy link</button>
       <label class="field mobile-only">Sort by<select id="f-sort">${COLS.filter(([k]) => !["symbol", "groupName"].includes(k)).map(([k, n]) => `<option value="${k}" ${f.sort === k ? "selected" : ""}>${n}</option>`).join("")}</select></label>
     </div>
+    <div class="saved" id="saved-screens"></div>
     <div class="table-wrap" id="tbl">${skel(8)}</div>
     <div class="faint" id="skipped" style="font-size:12px;margin-top:8px"></div>`;
 
@@ -372,7 +476,7 @@ function screener(_, alive) {
       if (!rows.length) { $("#tbl").innerHTML = `<div class="empty">No stocks match these filters. <button class="link" data-clear>Clear filters</button></div>`; return; }
       if (matchMedia("(max-width:600px)").matches) {
         $("#tbl").innerHTML = `<div class="cards">${rows.map((s) => `<div class="card pick">
-          <div class="top"><div><div class="sym">${starBtn(s.symbol, s.price)}${link(s.symbol, esc(s.symbol))} ${label(s.label)}</div><div class="muted" style="font-size:12px">${esc(s.name)} · ${esc(s.groupName)}</div></div>${ring(s.score)}</div>
+          <div class="top"><div><div class="sym">${starBtn(s.symbol, s.price)}${cmpBtn(s.symbol)}${link(s.symbol, esc(s.symbol))} ${label(s.label)}</div><div class="muted" style="font-size:12px">${esc(s.name)} · ${esc(s.groupName)}</div></div>${ring(s.score)}</div>
           <div class="stats"><span>Upside <b class="${cls(s.upside)}">${pct(s.upside, 0)}</b></span><span>Gap <b class="${cls(valueGap(s))}">${pct(valueGap(s), 0)}</b></span><span>${multipleText(s)}</span>${s.thesisNim != null || s.thesisTrade != null ? `<span>Thesis <b>${thesisCell(s)}</b></span>` : ""}</div>
           ${s.why[0] ? `<div class="muted" style="font-size:12px">${esc(s.why[0])}</div>` : ""}</div>`).join("")}</div>`;
         return;
@@ -380,7 +484,7 @@ function screener(_, alive) {
       $("#tbl").innerHTML = `<table class="sticky"><thead><tr>${COLS.map(([k, n, a]) => `<th scope="col" class="${a || ""} ${f.sort === k ? "sorted" : ""}" aria-sort="${f.sort === k ? (f.dir > 0 ? "ascending" : "descending") : "none"}"><button data-sort="${k}">${n}${f.sort === k ? (f.dir > 0 ? " ↑" : " ↓") : ""}</button></th>`).join("")}</tr></thead><tbody>${rows.map((s) => {
         const gap = valueGap(s);
         return `<tr>
-        <td class="l">${starBtn(s.symbol, s.price)}${link(s.symbol, `<b>${esc(s.symbol)}</b> <span class="name">${esc(s.name)}</span>`)}${s.dataFlags?.length ? ` <span class="warn" title="${esc(s.dataFlags.join(" · "))}">⚠</span>` : ""}</td>
+        <td class="l">${starBtn(s.symbol, s.price)}${cmpBtn(s.symbol)}${link(s.symbol, `<b>${esc(s.symbol)}</b> <span class="name">${esc(s.name)}</span>`)}${s.dataFlags?.length ? ` <span class="warn" title="${esc(s.dataFlags.join(" · "))}">⚠</span>` : ""}</td>
         <td class="l">${label(s.label)}</td>
         <td class="num" title="${esc(partsTip(s.parts, s.missing))}"><b>${s.score ?? "—"}</b>${s.missing?.length ? `<span class="faint">*</span>` : ""}</td>
         <td class="num" title="${esc((s.thesisWhy || []).join(" · "))}">${thesisCell(s)}</td>
@@ -414,6 +518,41 @@ function screener(_, alive) {
     on("#f-up", "input", (e) => { f.minUp = e.target.value; draw(); });
     on("#f-text", "input", (e) => { f.text = e.target.value; draw(); });
     on("#f-clear", "click", reset);
+    const PRESETS = [
+      { name: "Rates thesis matches", f: { lens: "Rates thesis match" } },
+      { name: "Cheap banks", f: { lens: "Banks", sig: "Screens cheap" } },
+      { name: "Dealers", f: { lens: "Dealers (FICC)", sort: "thesis" } },
+      { name: "Small & mid caps", f: { tiers: ["Small", "Mid"], sig: "Screens cheap" } },
+    ];
+    const apply = (ff) => {
+      Object.assign(f, DEFAULT_FILTERS, { tiers: [...DEFAULT_FILTERS.tiers] }, ff);
+      $("#f-ex").value = f.ex; $("#f-group").value = f.group; $("#f-sig").value = f.sig; $("#f-lens").value = f.lens; $("#f-up").value = f.minUp; $("#f-text").value = f.text;
+      $$("[data-tier]").forEach((b) => { const on2 = f.tiers.includes(b.dataset.tier); b.classList.toggle("on", on2); b.setAttribute("aria-pressed", on2); });
+      draw();
+    };
+    const drawSaved = () => {
+      const mine = screens.all();
+      $("#saved-screens").innerHTML = `<span class="faint" style="font-size:12px">Screens:</span> ${PRESETS.map((p, i) => `<button class="chip" data-preset="${i}">${esc(p.name)}</button>`).join("")}${mine.map((m) => `<span class="chip saved-chip"><button class="link" data-load="${esc(m.name)}">${esc(m.name)}</button><button class="link" data-del="${esc(m.name)}" aria-label="Delete saved screen ${esc(m.name)}">×</button></span>`).join("")}<span id="save-form"></span>`;
+    };
+    drawSaved();
+    $("#saved-screens").addEventListener("click", (e) => {
+      const p = e.target.closest("[data-preset]"), l = e.target.closest("[data-load]"), dl = e.target.closest("[data-del]");
+      if (p) apply(PRESETS[Number(p.dataset.preset)].f);
+      if (l) apply(screens.all().find((m) => m.name === l.dataset.load)?.f || {});
+      if (dl) { screens.remove(dl.dataset.del); drawSaved(); }
+      if (e.target.id === "save-ok") { const n = $("#save-name").value.trim(); if (n) { screens.save(n, f); drawSaved(); } }
+      if (e.target.id === "save-cancel") $("#save-form").innerHTML = "";
+    });
+    on("#f-save", "click", () => {
+      $("#save-form").innerHTML = `<label class="sr" for="save-name">Name this screen</label><input id="save-name" placeholder="Name this screen" style="background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:4px 8px;color:var(--text)"> <button class="btn" id="save-ok">Save</button> <button class="link" id="save-cancel">Cancel</button>`;
+      $("#save-name").focus();
+      $("#save-name").addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("#save-ok").click(); if (ev.key === "Escape") $("#save-form").innerHTML = ""; });
+    });
+    on("#f-share", "click", async (e) => {
+      const q = filtersToQuery(f);
+      try { await navigator.clipboard.writeText(location.href.split("#")[0] + "#screener" + (q ? "?" + q : "")); e.target.textContent = "Link copied"; setTimeout(() => { e.target.textContent = "Copy link"; }, 2000); }
+      catch { e.target.textContent = "Couldn't copy"; }
+    });
     on("#f-sort", "change", (e) => { f.sort = e.target.value; f.dir = ["label", "valuation"].includes(f.sort) ? 1 : -1; draw(); });
     $$("[data-tier]").forEach((b) => b.addEventListener("click", () => {
       const t = b.dataset.tier; f.tiers = f.tiers.includes(t) ? f.tiers.filter((v) => v !== t) : [...f.tiers, t];
@@ -482,6 +621,7 @@ async function research(sym, alive) {
       <div class="card"><div class="card-head"><h2>Value reference points</h2></div><div id="fv">${skel(4)}</div></div>
       <div class="card span2"><div class="card-head"><h2 id="peer-h">Peers</h2></div><div id="peers">${skel(6)}</div></div>
     </div>
+    <div class="card" style="margin-top:14px" id="handcard" hidden><div class="card-head"><h2 id="hand-h">Capital & rate sensitivity</h2><span class="muted" style="font-size:12px" id="hand-q"></span></div><div id="handbody"></div></div>
     <div class="card" style="margin-top:14px" id="nimcard" hidden><div class="card-head"><h2>Bank fundamentals: ${term("nim", "NIM")}, capital, credit</h2><a href="#rates">All banks →</a></div><div id="nimbody">${skel(4)}</div></div>
     <div class="grid g3" style="margin-top:14px">
       <div class="card"><div class="card-head"><h2>Cheap for its returns?</h2></div><div class="scatter" id="scatter">${skel(6)}</div></div>
@@ -534,7 +674,7 @@ async function research(sym, alive) {
     $("#qh").innerHTML = `<div><h1>${esc(s.name)} <span class="muted" style="font-weight:450">${esc(sym)}</span></h1>
       <div class="muted">${esc([s.exchange, row?.groupName || s.industry, row?.tier ? `${row.tier} cap` : null].filter(Boolean).join(" · "))}${d?.asOf ? ` · screen data ${ago(d.asOf)}` : ""}</div></div>
       <div style="text-align:right"><div class="px num">${money(s.price, s.currency)} <span class="${cls(s.changePct)}" style="font-size:15px">${pct(s.changePct)}</span></div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:4px">${row ? `${label(row.label)} <span title="${esc(partsTip(row.parts, row.missing))}">${ring(row.score)}</span>` : `<span class="chip">Outside the financials universe</span>`}${starBtn(sym, s.price)}</div></div>`;
+      <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:4px">${row ? `${label(row.label)} <span title="${esc(partsTip(row.parts, row.missing))}">${ring(row.score)}</span>` : `<span class="chip">Outside the financials universe</span>`}${starBtn(sym, s.price)}${cmpBtn(sym)}</div></div>`;
   }
   if (row?.dataFlags?.length || row?.missing?.length) $("#flags").innerHTML = `<div class="banner" style="border-left-color:var(--warn);font-size:13px">${row.dataFlags.map((f) => `<div>⚠ ${esc(f)}</div>`).join("")}${row.missing.length ? `<div>Missing from the percentile (counted as neutral): ${esc(row.missing.join(", "))}.</div>` : ""}</div>`;
 
@@ -618,12 +758,33 @@ async function research(sym, alive) {
   // ---- Peers ----
   if (row) {
     $("#peer-h").textContent = `${row.groupName}: peer comparison`;
-    const isBank = BANK_GROUPS.includes(row.group);
-    $("#peers").innerHTML = `<div class="table-wrap" style="border:0"><table><thead><tr><th scope="col" class="l">Stock</th><th scope="col">Pctl</th><th scope="col">${isBank ? "P/TBV" : "P/B"}</th><th scope="col">Fwd P/E</th><th scope="col">${isBank ? "ROTCE" : "ROE"}</th><th scope="col">Yield</th>${isBank ? `<th scope="col">NIM Δ</th><th scope="col">Dep β</th>` : ""}<th scope="col">Value gap</th><th scope="col">Upside</th><th scope="col">3m</th></tr></thead><tbody>
-      ${peers.map((p) => `<tr class="${p.symbol === sym ? "peer-hl" : ""}"><td class="l">${p.symbol === sym ? `<b>${esc(p.symbol)}</b>` : link(p.symbol, esc(p.symbol))}</td><td class="num">${p.score ?? "—"}</td><td class="num">${x(p.pb, 2)}</td><td class="num">${x(p.forwardPE)}</td><td class="num">${pct(p.roeF ?? p.roe, 0, false)}</td><td class="num">${pct(p.yield, 1, false)}</td>${isBank ? `<td class="num ${cls(p.nim?.chg1y)}">${p.nim ? bp(p.nim.chg1y) : "—"}</td><td class="num">${fix(p.nim?.depBeta)}</td>` : ""}<td class="num ${cls(valueGap(p))}">${pct(valueGap(p), 0)}</td><td class="num ${cls(p.upside)}">${pct(p.upside, 0)}</td><td class="num ${cls(p.ret3m)}">${pct(p.ret3m, 0)}</td></tr>`).join("")}
-      <tr><td class="l muted">Peer median</td><td></td><td class="num muted">${x(medOf(peers, "pb"), 2)}</td><td class="num muted">${x(medOf(peers, "forwardPE"))}</td><td class="num muted">${pct(medOf(peers, "roeF"), 0, false)}</td><td class="num muted">${pct(medOf(peers, "yield"), 1, false)}</td>${isBank ? "<td></td><td></td>" : ""}<td></td><td class="num muted">${pct(medOf(peers, "upside"), 0)}</td><td class="num muted">${pct(medOf(peers, "ret3m"), 0)}</td></tr></tbody></table></div>`;
+    const isBank = BANK_GROUPS.includes(row.group), isPC = row.group === "pc";
+    $("#peers").innerHTML = `<div class="table-wrap" style="border:0"><table><thead><tr><th scope="col" class="l">Stock</th><th scope="col">Pctl</th><th scope="col">${isBank ? "P/TBV" : "P/B"}</th><th scope="col">Fwd P/E</th><th scope="col">${isBank ? "ROTCE" : "ROE"}</th><th scope="col">Yield</th>${isBank ? `<th scope="col">NIM Δ</th><th scope="col">Dep β</th><th scope="col">CET1</th>` : ""}${isPC ? `<th scope="col">Comb. ratio</th>` : ""}<th scope="col">Value gap</th><th scope="col">Upside</th><th scope="col">3m</th></tr></thead><tbody>
+      ${peers.map((p) => `<tr class="${p.symbol === sym ? "peer-hl" : ""}"><td class="l">${p.symbol === sym ? `<b>${esc(p.symbol)}</b>` : link(p.symbol, esc(p.symbol))}</td><td class="num">${p.score ?? "—"}</td><td class="num">${x(p.pb, 2)}</td><td class="num">${x(p.forwardPE)}</td><td class="num">${pct(p.roeF ?? p.roe, 0, false)}</td><td class="num">${pct(p.yield, 1, false)}</td>${isBank ? `<td class="num ${cls(p.nim?.chg1y)}">${p.nim ? bp(p.nim.chg1y) : "—"}</td><td class="num">${fix(p.nim?.depBeta)}</td><td class="num">${p.hand?.cet1 != null ? p.hand.cet1 + "%" : "—"}</td>` : ""}${isPC ? `<td class="num">${p.hand?.cr != null ? `${p.hand.cr}% <span class="${cls(p.hand.crChg == null ? null : -p.hand.crChg)}" style="font-size:11px">${p.hand.crChg > 0 ? "+" : ""}${p.hand.crChg ?? ""}</span>` : "—"}</td>` : ""}<td class="num ${cls(valueGap(p))}">${pct(valueGap(p), 0)}</td><td class="num ${cls(p.upside)}">${pct(p.upside, 0)}</td><td class="num ${cls(p.ret3m)}">${pct(p.ret3m, 0)}</td></tr>`).join("")}
+      <tr><td class="l muted">Peer median</td><td></td><td class="num muted">${x(medOf(peers, "pb"), 2)}</td><td class="num muted">${x(medOf(peers, "forwardPE"))}</td><td class="num muted">${pct(medOf(peers, "roeF"), 0, false)}</td><td class="num muted">${pct(medOf(peers, "yield"), 1, false)}</td>${isBank ? "<td></td><td></td><td></td>" : ""}${isPC ? "<td></td>" : ""}<td></td><td class="num muted">${pct(medOf(peers, "upside"), 0)}</td><td class="num muted">${pct(medOf(peers, "ret3m"), 0)}</td></tr></tbody></table></div>`;
     scatter($("#scatter"), peers, sym);
   } else { $("#peers").innerHTML = `<div class="empty">Peer comparison is available for stocks in the financials universe.</div>`; $("#scatter").innerHTML = ""; }
+
+  // ---- Hand-entered capital, rate-sensitivity and underwriting figures ----
+  if (row?.hand) {
+    const h = row.hand, hb = d.handbook || {};
+    $("#handcard").hidden = false;
+    $("#hand-q").textContent = `${h.quarter} · entered by hand${hb.stale?.length ? " · newer results are out" : ""}`;
+    if (h.cr != null) {
+      $("#hand-h").textContent = "Underwriting";
+      $("#handbody").innerHTML = `<div class="stats"><span>Combined ratio${h.crSegment ? ` (${esc(h.crSegment)})` : ""} <b class="${h.cr < 95 ? "up" : h.cr > 100 ? "down" : ""}">${h.cr}%</b></span><span>Year earlier <b>${h.crPrior ?? "—"}%</b>${h.priorDerived ? " <span class='faint'>(derived from the reported change)</span>" : ""}</span><span>Change <b class="${cls(h.crChg == null ? null : -h.crChg)}">${h.crChg != null ? `${h.crChg > 0 ? "+" : ""}${h.crChg} pts` : "—"}</b></span><span>Underlying / ex-cat <b>${h.crUnderlying != null ? `${h.crUnderlying}%` : "—"}</b></span></div>
+        <div class="faint" style="font-size:12px;margin-top:6px">Combined ratio = claims + expenses ÷ premiums. Below 100% means an underwriting profit; the gap between reported and underlying is mostly catastrophe losses and prior-year reserve changes. <a href="${esc(safeUrl(h.src))}" target="_blank" rel="noopener noreferrer">Source</a>.</div>`;
+    } else {
+      api("/api/curve", 30 * 60e3).then((c) => {
+        if (!alive()) return;
+        const pol = row.currency === "CAD" ? c.ca?.policy : c.us?.policy;
+        const moves = pol?.movesPriced1y;
+        const est = h.niiPctUp != null && moves != null ? Math.round((moves * 0.25 * (moves >= 0 ? h.niiPctUp : -h.niiPctDn)) * 10) / 10 : null;
+        $("#handbody").innerHTML = `<div class="stats"><span>${term("cet1", "CET1")} <b>${h.cet1 != null ? `${h.cet1}%` : "—"}</b></span><span>Requirement <b>${h.cet1Req != null ? `${h.cet1Req}%` : "not stated"}</b></span>${h.cet1Excess != null ? `<span>Excess <b class="${h.cet1Excess >= 150 ? "up" : h.cet1Excess < 75 ? "down" : ""}">${h.cet1Excess} bp</b></span>` : ""}<span>NII for +100 bp <b>${h.niiPctUp != null ? pct(h.niiPctUp, 1) : "not entered"}</b></span><span>NII for −100 bp <b>${h.niiPctDn != null ? pct(h.niiPctDn, 1) : "not entered"}</b></span>${est != null ? `<span>Rough NII effect of the priced path <b class="${cls(est)}">${pct(est, 1)}</b></span>` : ""}</div>
+          <div class="faint" style="font-size:12px;margin-top:6px">${h.cet1Note ? esc(h.cet1Note) + ". " : ""}${row.currency === "CAD" ? esc(hb.notes?.osfi || "") : esc(hb.notes?.us || "")} ${h.niiPctUp != null ? `NII sensitivity is the bank's own disclosure (${esc(h.niiBasis)}), as a % of annualised NII.${est != null ? ` The priced-path estimate scales it to the ~${Math.abs(moves)} quarter-point ${moves >= 0 ? "hikes" : "cuts"} priced for the next year (linear, rough).` : ""}` : ""} <a href="${esc(safeUrl(h.src))}" target="_blank" rel="noopener noreferrer">Source</a>.</div>`;
+      }).catch(() => {});
+    }
+  }
 
   // ---- Bank fundamentals ----
   if (row && BANK_GROUPS.includes(row.group)) {
@@ -671,7 +832,7 @@ async function research(sym, alive) {
       <div class="faint" style="font-size:12px;margin-top:4px">Grey = sector-wide part · coloured = the stock's own part${row.sens ? ` · over the past year it moved most with <b style="color:var(--text)">${esc(row.sens.name)}</b> (daily correlation ${row.sens.corr > 0 ? "+" : ""}${row.sens.corr})` : ""}</div></div>`;
   })() : "";
   if (c.error) { $("#why").innerHTML = split + errBox(c.error); return; }
-  const n = c.macroCounts;
+  const n = c.macroCounts || { macro: 0, company: 0, total: 0 };
   const agree = v && v.newsSays ? (v.priceSays === "sector" && v.newsSays === "macro" ? `<div class="banner" style="border-left-color:var(--muted)">Price and headlines point the same way: most of the 3-month move is shared with its sector, and ${n.macro} of ${n.total} negative themed headlines are macro. That pattern fits a sector-wide discount; whether it reverses depends on the macro story and on earnings holding up.</div>`
     : v.priceSays === "own" && v.newsSays === "company" ? `<div class="banner" style="border-left-color:var(--muted)">Price and headlines point the same way: most of the move is the stock's own, and ${n.company} of ${n.total} negative themed headlines are about the company or its industry. Find out whether the issue is one-off or lasting.</div>`
     : v.priceSays === "own" && v.newsSays === "macro" ? `<div class="banner" style="border-left-color:var(--warn)">The headlines lean macro, but the stock fell more than its sector explains. The extra drop may have a company-specific cause the headline tagging missed; read the filings and recent news.</div>`
@@ -840,7 +1001,7 @@ function rates(_, alive) {
     const drawT = () => {
       const rows = b.banks.filter((x2) => grp === "all" || (grp === "match" ? by[x2.symbol]?.thesisFit : x2.group === grp));
       $("#nimf").innerHTML = [["match", "Thesis matches"], ["all", "All banks"], ...BANK_GROUPS.map((g) => [g, b.groups.find((x2) => x2.key === g)?.name || g])].map(([k, n]) => `<button class="chip ${grp === k ? "on" : ""}" data-g="${k}" aria-pressed="${grp === k}">${esc(n)}</button>`).join("");
-      $("#nimt").innerHTML = rows.length ? `<table class="sticky"><thead><tr><th scope="col" class="l">Bank</th><th scope="col">Rank</th><th scope="col">Quarter</th><th scope="col">Δ last qtr</th><th scope="col">Δ 1 year</th><th scope="col">Asset yield Δ</th><th scope="col">Funding cost Δ</th><th scope="col">Deposit β</th><th scope="col">NII y/y</th><th scope="col">P/TBV</th><th scope="col">ROTCE</th><th scope="col">Pctl</th><th scope="col" class="l">Signal</th></tr></thead><tbody>
+      $("#nimt").innerHTML = rows.length ? `<table class="sticky"><thead><tr><th scope="col" class="l">Bank</th><th scope="col">Rank</th><th scope="col">Quarter</th><th scope="col">Δ last qtr</th><th scope="col">Δ 1 year</th><th scope="col">Asset yield Δ</th><th scope="col">Funding cost Δ</th><th scope="col">Deposit β</th><th scope="col">NII y/y</th><th scope="col">P/TBV</th><th scope="col">ROTCE</th><th scope="col">CET1</th><th scope="col">NII +100bp</th><th scope="col">Pctl</th><th scope="col" class="l">Signal</th></tr></thead><tbody>
         ${rows.map((x2) => { const s = by[x2.symbol];
           return `<tr><td class="l">${starBtn(x2.symbol, s?.price)}${link(x2.symbol, `<b>${esc(x2.symbol)}</b> <span class="name">${esc(s?.name || x2.groupName)}</span>`)}${s?.thesisFit ? ` <span class="label undervalued" title="Margin widening in absolute terms, ranks well, and not a value-trap risk">Thesis match</span>` : ""}</td>
           <td class="num"><b>${x2.nimRank ?? "—"}</b><span class="faint">/${x2.nimOf}</span>${x2.streak === 2 ? ` <span class="faint" title="Widened two quarters in a row">↑↑</span>` : ""}</td>
@@ -851,6 +1012,7 @@ function rates(_, alive) {
           <td class="num">${fix(x2.depBeta)}</td>
           <td class="num ${cls(x2.niiYoY)}">${pct(x2.niiYoY, 0)}</td>
           <td class="num">${s?.bookBasis === "tangible" ? x(s.pb, 2) : "—"}</td><td class="num">${pct(x2.rotce, 0, false)}</td>
+          <td class="num">${s?.hand?.cet1 != null ? `${s.hand.cet1}%` : "—"}</td><td class="num ${cls(s?.hand?.niiPctUp)}">${s?.hand?.niiPctUp != null ? pct(s.hand.niiPctUp, 1) : "—"}</td>
           <td class="num">${s?.score ?? "—"}</td><td class="l">${label(s?.label)}</td></tr>`; }).join("")}</tbody></table>`
         : `<div class="empty">${grp === "match" ? "No bank currently has a widening margin, a strong rank and a clean value-trap check. Try All banks." : "No quarterly data came back for these banks."}</div>`;
     };
@@ -929,7 +1091,7 @@ function watchlist(_, alive) {
       const qq = q.quotes[it.symbol] || {}, s = by[it.symbol];
       const since = isNum(it.price) && isNum(qq.price) ? (qq.price / it.price - 1) * 100 : null;
       const n = notes.get(it.symbol).split("\n")[0];
-      return `<tr><td class="l">${starBtn(it.symbol, qq.price)}${link(it.symbol, `<b>${esc(it.symbol)}</b> <span class="name">${esc(qq.name || "")}</span>`)}</td>
+      return `<tr><td class="l">${starBtn(it.symbol, qq.price)}${cmpBtn(it.symbol)}${link(it.symbol, `<b>${esc(it.symbol)}</b> <span class="name">${esc(qq.name || "")}</span>`)}</td>
         <td class="num">${money(qq.price, qq.currency)}</td><td class="num ${cls(qq.changePct)}">${pct(qq.changePct)}</td>
         <td class="num ${cls(since)}" title="Starred ${new Date(it.added).toLocaleDateString()} at ${fix(it.price)}">${pct(since)}</td>
         <td class="num ${cls(s?.upside)}">${pct(s?.upside, 0)}</td><td class="num">${s?.score ?? "—"}</td><td class="l">${label(s?.label)}</td>

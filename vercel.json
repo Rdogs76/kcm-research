@@ -15,5 +15,15 @@
     "api/curve.js": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/screen",
+      "schedule": "40 12 * * 1-5"
+    },
+    {
+      "path": "/api/banks",
+      "schedule": "50 12 * * 1-5"
+    }
+  ]
 }

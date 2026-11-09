@@ -26,6 +26,7 @@ import { pool, quotes, ranks, clip, r1, DAY } from "./_lib/screen.js";
 import { UNIVERSE, GROUPS, FACTORS, exchangeOf, capTier } from "./_lib/universe.js";
 import { one as bankNim, BANK_GROUPS, nimScores } from "./banks.js";
 import { TRADING, tradingStatus } from "./_lib/trading.js";
+import { HANDBOOK, handbookFor } from "./_lib/handbook.js";
 import { policyRates, valet } from "./_lib/rates.js";
 
 const med = (xs) => { const v = xs.filter((x) => x != null && Number.isFinite(x)).sort((a, b) => a - b); if (!v.length) return null; const m = v.length >> 1; return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
@@ -260,7 +261,7 @@ export function build(q, det, hist, ctx = {}) {
       upside: r1(upside),
       recMean: d.recMean, rating: analystLabel(d.recMean), analysts: d.analysts, counts: d.counts || null,
       rev90: r1(clip(d.rev90, -80, 150)), growthNext: r1(clip(d.growthNext, -90, 300)),
-      dataFlags, missing: [],
+      dataFlags, missing: [], hand: handbookFor(sym),
     };
   }).filter(Boolean);
 
@@ -336,6 +337,8 @@ export function build(q, det, hist, ctx = {}) {
     if (s.sector3m != null && s.sector3m <= -4 && (s.own3m ?? 0) > -4) why.push(`Over 3 months its sector accounts for ${s.sector3m.toFixed(0)} pts of the move and its own part is ${s.own3m >= 0 ? "+" : ""}${s.own3m.toFixed(0)} pts, consistent with a sector-wide markdown`);
     if (s.upside != null && s.upside >= 10) why.push(`Average analyst target is ${s.upside.toFixed(0)}% above the price${s.analysts ? ` (${s.analysts} analysts${s.counts ? `: ${s.counts.buy} buy / ${s.counts.hold} hold / ${s.counts.sell} sell` : ""})` : ""}`);
     if (s.rev90 != null && s.rev90 >= 3) why.push(`Next year's EPS estimate raised ${s.rev90.toFixed(0)}% in 90 days`);
+    if (s.hand?.cr != null && s.hand.cr < 92 && (s.hand.crChg ?? 0) < 4) why.push(`Combined ratio ${s.hand.cr}% in ${s.hand.quarter}${s.hand.crPrior != null ? ` (${s.hand.crPrior}% a year earlier)` : ""}: profitable underwriting`);
+    if (s.hand?.cet1Excess != null && s.hand.cet1Excess >= 150) why.push(`CET1 ${s.hand.cet1}%, ${s.hand.cet1Excess} bp above its ${s.hand.cet1Req}% requirement: room for buybacks`);
     if (s.yield != null && s.yield >= 4 && (s.payout ?? 0) <= 80) why.push(`${s.yield.toFixed(1)}% dividend yield, ${s.payout != null ? `${s.payout.toFixed(0)}% payout` : "covered"}`);
     s.why = why.slice(0, 4);
 
@@ -343,6 +346,10 @@ export function build(q, det, hist, ctx = {}) {
     if (s.rev90 != null && s.rev90 <= -5) traps.push(`Analysts cut next year's EPS estimate ${Math.abs(s.rev90).toFixed(0)}% in 90 days${s.own3m != null && s.own3m <= -5 ? " while the stock lagged its sector" : ""}`);
     const roeUse = s.roeF ?? s.roe;
     if (roeUse != null && s.group !== "holdco" && roeUse < s.coe - 3) traps.push(`${s.bookBasis === "tangible" ? "ROTCE" : "ROE"} of ${roeUse.toFixed(1)}% sits below its ~${s.coe}% cost of equity`);
+    const hb = s.hand;
+    if (hb?.cr != null && hb.cr > 100) traps.push(`Combined ratio ${hb.cr}% in ${hb.quarter}: losing money on underwriting`);
+    else if (hb?.crChg != null && hb.crChg >= 4) traps.push(`Combined ratio worsened ${hb.crChg} pts y/y to ${hb.cr}% (${hb.quarter})`);
+    if (hb?.cet1Excess != null && hb.cet1Excess < 75) traps.push(`CET1 of ${hb.cet1}% is only ${hb.cet1Excess} bp above its ${hb.cet1Req}% requirement, which limits buybacks`);
     const nbk = nimData[s.symbol];
     if (nbk?.provYoY != null && nbk.provYoY > 25 && (s.rev90 ?? 0) < 0) traps.push(`Credit-loss provisions up ${nbk.provYoY.toFixed(0)}% y/y while EPS estimates are being cut`);
     if (s.payout != null && s.payout > 100 && !["alts", "holdco"].includes(s.group)) traps.push(`Paying out ${s.payout.toFixed(0)}% of expected earnings`);
@@ -380,6 +387,7 @@ export function build(q, det, hist, ctx = {}) {
     }
     if (n.depBeta != null) tw.push(`Implied deposit beta ${n.depBeta.toFixed(2)}: deposit costs moved ${n.depCostChg >= 0 ? "+" : ""}${n.depCostChg} bp against a ${n.policyChg >= 0 ? "+" : ""}${n.policyChg} bp change in the average policy rate`);
     if (n.niiYoY != null) tw.push(`Net interest income ${n.niiYoY >= 0 ? "up" : "down"} ${Math.abs(n.niiYoY).toFixed(0)}% y/y`);
+    if (s.hand?.niiPctUp != null) tw.push(`Discloses NII ${s.hand.niiPctUp >= 0 ? "+" : ""}${s.hand.niiPctUp}% for +100 bp and ${s.hand.niiPctDn}% for −100 bp over 12 months (${s.hand.niiBasis}, ${s.hand.quarter}): ${Math.abs(s.hand.niiPctUp) >= Math.abs(s.hand.niiPctDn) ? "asset-sensitive" : "hurt more by cuts than helped by hikes"}`);
     if (n.stale) tw.push(`Latest statements on Yahoo are for the quarter ended ${n.quarter}, more than two quarters old, so this is left out of the thesis match`);
     else if (n.lagging) tw.push(`Yahoo's latest statements are for the quarter ended ${n.quarter}; the bank has likely reported a newer quarter, so check its latest release`);
     s.thesisWhy = tw;
@@ -428,7 +436,7 @@ export function build(q, det, hist, ctx = {}) {
     : null;
 
   const thesisCount = stocks.filter((s) => s.thesisFit).length;
-  return { stocks, groups: groupList, insight, usdcad, tnx, goc10, slope: r2(slope), skipped, staleQuotes, fxFallback: !usdcad, thesisCount, tradingQuarter: ctx.trading?.quarter || null, tradingStatus: ctx.tradingStatus || null };
+  return { stocks, groups: groupList, insight, usdcad, tnx, goc10, slope: r2(slope), skipped, staleQuotes, fxFallback: !usdcad, thesisCount, tradingQuarter: ctx.trading?.quarter || null, tradingStatus: ctx.tradingStatus || null, handbook: { asOf: HANDBOOK.asOf, nextUpdate: HANDBOOK.nextUpdate, notes: HANDBOOK.notes, stale: Object.entries(HANDBOOK.nextUpdate).filter(([, d]) => new Date().toISOString().slice(0, 10) > d).map(([r]) => r) } };
 }
 
 export default async function handler(req, res) {

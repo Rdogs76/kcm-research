@@ -18,6 +18,13 @@ It is built on the same base as the portfolio dashboard: the same `api/_lib/util
 | Catalysts | Headlines on war, geopolitics, tariffs, rates, recession, credit, private credit, catastrophe losses and more, with a theme-heat chart |
 | Watchlist | Starred names, price change since you starred them, current score and signal, first line of your notes |
 | Calendar | This week's US and Canadian events, with rate decisions and inflation prints flagged |
+| Compare | Up to four names side by side: valuation, returns, capital, rate sensitivity, underwriting, thesis and red flags. Add names with **+** in the screener, watchlist or research pages, and share or print the comparison |
+
+**Screener extras.**
+
+- Built-in screens: Rates thesis matches, Cheap banks, Dealers, Small & mid caps.
+- **Save screen** keeps your own filter sets in this browser.
+- **Copy link** shares the exact screen, for example `#screener?lens=Banks&sig=Screens+cheap`.
 
 ## How the score works
 
@@ -110,6 +117,27 @@ is cached at the edge for 6 hours.
 npm install
 npx vercel dev
 ```
+
+## Hand-entered figures (`api/_lib/handbook.js`)
+
+Free APIs don't carry these, so they come from each company's quarterly release, with the quarter and source link on every entry:
+
+- **CET1 ratios:** the Big 6 against OSFI's 11.5% D-SIB requirement, plus the large US banks.
+- **NII sensitivity to ±100 bp:** each bank's own disclosure. Today: RBC, BMO, CIBC and Bank of America.
+- **P&C combined ratios:** with the year-ago figure and the underlying ratio.
+
+How they feed the dashboard:
+
+- They appear on research pages, the peer tables, the NIM table and Compare.
+- They add red flags: combined ratio above 100 or up 4+ points year on year, and CET1 within 75 bp of its requirement.
+- The research page scales each bank's NII sensitivity to the hikes or cuts currently priced, as a rough estimate.
+
+**Update this file each earnings season, along with `trading.js`.** A scheduled task does it automatically (see below).
+
+## Background refresh and scheduled updates
+
+- `vercel.json` has two daily cron jobs on weekdays, before the market opens: `/api/screen` at 12:40 UTC and `/api/banks` at 12:50 UTC. They warm the edge cache, so the first visitor of the day doesn't wait for a cold pull. The Hobby plan allows one run a day per job.
+- Scheduled tasks in Claude research the new figures after each earnings season, update `trading.js` and `handbook.js`, and push. The push redeploys the site. They are set for after the Canadian banks report in early December and after the US banks report in mid-January.
 
 ## Rates data
 
