@@ -69,7 +69,7 @@ export function merge(lists, max = 60) {
     return words.length >= 4 ? words.slice(0, 10).join(" ") : norm;
   };
   for (const n of lists.flat()) {
-    if (!n?.title || !n.link) continue;
+    if (!n?.title || !n.link || !/^https?:\/\//i.test(String(n.link))) continue;
     const k = key(n.title);
     if (!k || seen.has(k)) continue;
     seen.add(k);
@@ -106,7 +106,7 @@ export const CATEGORIES = [
 ];
 const MACRO = new Set(CATEGORIES.filter((c) => c.macro).map((c) => c.key));
 const COMPANY = new Set(CATEGORIES.filter((c) => c.company).map((c) => c.key));
-const NEG = /\b(falls?|fell|drops?|dropped|slumps?|plunges?|tumbles?|sinks?|slides?|cuts?|downgraded?|downgrades|miss(es|ed)?|loss(es)?|warns?|warning|concerns?|fears?|worr(y|ies|ied)|risks?|probe|fined|lawsuits?|weak(er|ens?)?|declines?|slash(es|ed)?|hits?|pressure[sd]?|sell-?off|lowers?|lowered|disappoint\w*|struggl\w*|turmoil|crisis|shock|plummets?|halts?|suspend\w*|exposure|tumbled|slumped)\b/;
+const NEG = /\b(falls?|fell|drops?|dropped|slumps?|plunges?|tumbles?|sinks?|slides?|cuts?|downgraded?|downgrades|miss(es|ed)?|loss(es)?|warns?|warning|concerns?|fears?|worr(y|ies|ied)|probe|fined|lawsuits?|weak(er|ens?)?|declines?|slash(es|ed)?|hits?|pressure[sd]?|sell-?off|lowers?|lowered|disappoint\w*|struggl\w*|turmoil|crisis|shock|plummets?|halts?|suspend\w*|tumbled|slumped)\b/;
 const POS = /\b(rises?|rose|jumps?|jumped|surges?|surged|beats?|upgraded?|upgrades|record|gains?|rall(y|ies|ied)|raises?|raised|strong(er)?|boosts?|soars?|soared|tops|outperforms?|rebounds?|recover(s|ed|y)?)\b/;
 // Phrases whose words would otherwise trip the tone check ("rate cut" is often good news for stocks).
 const NEUTRALIZE = /rate cuts?|price targets?|risk-?weighted|risk management|chief risk officer|beaten-?down/g;
@@ -146,4 +146,15 @@ export function macroShare(items) {
     if (m && !c) macro++; else if (c) company++;
   }
   return macro + company ? Math.round((macro / (macro + company)) * 100) : null;
+}
+
+// Counts behind the macro share: negative headlines that are purely macro vs company/industry.
+export function macroCounts(items) {
+  let macro = 0, company = 0;
+  for (const n of items) {
+    if (n.tone !== "negative") continue;
+    const m = n.tags.some((k) => MACRO.has(k)), c = n.tags.some((k) => COMPANY.has(k));
+    if (m && !c) macro++; else if (c) company++;
+  }
+  return { macro, company, total: macro + company };
 }

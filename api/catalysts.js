@@ -7,7 +7,11 @@
 // Google News and BNN Bloomberg and link to the original article.
 import { send, fail, symbolsFrom, num } from "./_lib/util.js";
 import { quotes } from "./_lib/screen.js";
-import { googleNews, yahooRss, yahooSearch, merge, gather, tagged, drivers, macroShare as shareOf, CATEGORIES } from "./_lib/newsfeed.js";
+import { googleNews, yahooRss, yahooSearch, merge, gather, tagged, drivers, macroShare as shareOf, macroCounts, CATEGORIES } from "./_lib/newsfeed.js";
+import { UNIVERSE } from "./_lib/universe.js";
+
+const KNOWN = new Set(UNIVERSE.map((u) => u[0]));
+const MIN_VERDICT = 6; // negative, theme-tagged headlines needed before saying "macro" or "company"
 
 const DAY = 86400000;
 const SITES = "(site:bloomberg.com OR site:reuters.com OR site:bnnbloomberg.ca OR site:theglobeandmail.com OR site:financialpost.com)";
@@ -34,27 +38,28 @@ export function cleanName(name, symbol) {
 }
 
 function summarize(items, symbol) {
-  const recent = items.filter((n) => !n.time || n.time > Date.now() - 90 * DAY);
+  const recent = items.filter((n) => n.time && n.time > Date.now() - 90 * DAY);
   const drv = drivers(recent);
   const neg = recent.filter((n) => n.tone === "negative").length, pos = recent.filter((n) => n.tone === "positive").length;
-  const macroShare = shareOf(recent);
+  const mc = macroCounts(recent);
+  const macroShare = mc.total >= MIN_VERDICT ? shareOf(recent) : null;
   let reason = null;
-  if (drv.length) {
-    const top = drv.slice(0, 3).map((d) => `${d.name.toLowerCase()} (${d.count} headline${d.count === 1 ? "" : "s"})`).join(", ");
-    reason = macroShare != null && macroShare >= 50
-      ? `Most negative headlines on ${symbol} are about the macro backdrop — ${top}. That is the kind of discount that can reverse when the news cycle turns, if the business itself is holding up.`
-      : `Negative headlines on ${symbol} are mostly about the company itself — ${top}. Check whether these are one-offs or a lasting change before treating the discount as an opportunity.`;
+  const top = drv.slice(0, 3).map((d) => `${d.name.toLowerCase()} (${d.count})`).join(", ");
+  if (mc.total >= MIN_VERDICT) {
+    reason = macroShare >= 50
+      ? `${mc.macro} of ${mc.total} negative, theme-tagged headlines on ${symbol} in the last 90 days are about the macro backdrop: ${top}. Headline tagging is automated and approximate; read the articles before drawing a conclusion.`
+      : `${mc.company} of ${mc.total} negative, theme-tagged headlines on ${symbol} in the last 90 days are about the company or its industry: ${top}. Check whether these are one-offs or a lasting change.`;
   } else if (recent.length) {
-    reason = `No clear negative catalyst in the last 90 days of headlines on ${symbol}; the discount may be valuation-driven or sector-wide.`;
+    reason = `Only ${mc.total} negative, theme-tagged headline${mc.total === 1 ? "" : "s"} on ${symbol} in the last 90 days, too few to say whether the news is mainly macro or company-specific${top ? ` (${top})` : ""}.`;
   }
-  return { drivers: drv, negative: neg, positive: pos, count: recent.length, macroShare, reason };
+  return { drivers: drv, negative: neg, positive: pos, count: recent.length, macroShare, macroCounts: mc, reason };
 }
 
 async function forSymbol(symbol, name, deep) {
   const short = cleanName(name, symbol);
   const tasks = [
     () => yahooSearch(symbol, deep ? 20 : 10),
-    () => googleNews(`"${short}"`, 90),
+    () => googleNews(`"${short}" (stock OR shares OR bank OR earnings OR analyst)`, 90),
   ];
   if (deep) {
     tasks.push(() => yahooRss(symbol));
@@ -84,7 +89,10 @@ export default async function handler(req, res) {
       return send(res, 200, { news, heat, errors, asOf: Date.now() }, 1800);
     }
 
+    const extra = Object.keys(req.query || {}).filter((k) => !["section", "symbol", "symbols"].includes(k));
+    if (extra.length) return send(res, 400, { error: `Unknown parameter: ${extra.join(", ")}` }, 3600);
     const [one] = symbolsFrom(req.query.symbol, 1);
+    if (req.query.symbol != null && (!one || !KNOWN.has(one))) return send(res, 400, { error: "News analysis is available for stocks in the research universe." }, 3600);
     if (one) {
       const q = await quotes([one]);
       const name = q[one]?.longName || q[one]?.shortName || one;
@@ -92,8 +100,8 @@ export default async function handler(req, res) {
       return send(res, 200, { symbol: one, name: short, price: num(q[one]?.regularMarketPrice), news: items, ...summarize(items, one), errors, asOf: Date.now() }, 1800);
     }
 
-    const list = symbolsFrom(req.query.symbols, 12);
-    if (!list.length) return send(res, 400, { error: "Add symbol=, symbols= or section=macro." }, 0);
+    const list = symbolsFrom(req.query.symbols, 12).filter((s) => KNOWN.has(s)).sort();
+    if (!list.length) return send(res, 400, { error: "Add symbol=, symbols= (research-universe tickers) or section=macro." }, 3600);
     const q = await quotes(list);
     const settled = await Promise.allSettled(list.map((s) => forSymbol(s, q[s]?.longName || q[s]?.shortName || s, false)));
     const out = {};

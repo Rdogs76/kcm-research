@@ -14,7 +14,7 @@ export const GROUPS = {
   cabank: { name: "Canadian banks", metric: "pb", etf: "ZEB.TO" },
   uslarge: { name: "US large banks", metric: "pb", etf: "KBE" },
   usreg: { name: "US regional banks", metric: "pb", etf: "KRE" },
-  calife: { name: "Canadian life insurers", metric: "pb", etf: "XFN.TO" },
+  calife: { name: "Canadian life insurers", metric: "pe", etf: "XFN.TO" }, // forward P/E, same as US life (IFRS 17 book values aren't comparable)
   uslife: { name: "US life insurers", metric: "pe", etf: "KIE" },
   pc: { name: "P&C insurers", metric: "pb", etf: "KIE" },
   holdco: { name: "Holding companies", metric: "pb", etf: "XLF" },

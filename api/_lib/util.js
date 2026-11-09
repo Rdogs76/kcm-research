@@ -13,6 +13,12 @@ export function yf() {
 
 export const NO_VALIDATE = { validateResult: false };
 
+// Reject after `ms`, and always clear the timer so a finished call never leaves a stray rejection behind.
+export function withTimeout(p, ms = 8000) {
+  let t;
+  return Promise.race([p, new Promise((_, rej) => { t = setTimeout(() => rej(new Error("timeout")), ms); })]).finally(() => clearTimeout(t));
+}
+
 export function send(res, status, body, maxAgeSeconds = 60) {
   if (maxAgeSeconds > 0) {
     res.setHeader("Cache-Control", `s-maxage=${maxAgeSeconds}, stale-while-revalidate=${maxAgeSeconds * 5}`);

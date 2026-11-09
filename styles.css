@@ -212,3 +212,43 @@ details.card > summary::before { content: "▸ "; color: var(--muted); }
 details[open].card > summary::before { content: "▾ "; }
 details.card[open] > summary { margin-bottom: 8px; }
 code { font-family: var(--mono); font-size: 12px; background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
+
+/* ---- Council round 2 ---- */
+.term { all: unset; cursor: help; border-bottom: 1px dotted currentColor; }
+.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.term-pop { position: absolute; z-index: 20; max-width: 300px; margin-top: 22px; margin-left: -40px; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; font-weight: 400; line-height: 1.45; box-shadow: 0 8px 24px rgb(0 0 0 / .3); white-space: normal; text-transform: none; letter-spacing: 0; }
+.throw { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; flex-wrap: wrap; }
+.more-read { display: none; } .more-read.shown { display: block; }
+.mobile-only { display: none; }
+.cards { display: grid; gap: 10px; padding: 10px; }
+table.grid3 { width: auto; margin: 6px 0; font-size: 12px; }
+table.grid3 th, table.grid3 td { padding: 3px 8px; border-bottom: 1px solid var(--line); text-align: right; }
+table.grid3 td.base { font-weight: 700; color: var(--accent); }
+.sticky thead th { position: sticky; top: 0; z-index: 3; background: var(--panel); }
+.table-wrap { max-height: 78vh; }
+.notes-print, .print-only { display: none; }
+details.fold > summary { cursor: pointer; list-style: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: "▸ "; color: var(--muted); }
+details[open].fold > summary::before { content: "▾ "; }
+footer p { margin: 0 0 8px; }
+@media (max-width: 600px) {
+  .mobile-only { display: flex; }
+  .page-head .muted { font-size: 13px; }
+  .pick .stats { gap: 8px; }
+}
+@media print {
+  :root { --bg: #fff; --panel: #fff; --panel-2: #f3f5f6; --line: #d6dcdf; --text: #111; --muted: #444; --faint: #555; --accent: #0d6b61; --up: #0a6b45; --down: #b3261e; --warn: #7a5300; --macro: #3a47b8; color-scheme: light; }
+  html, body { background: #fff; font-size: 11px; }
+  header.top, footer, .ranges, .star, .no-print, textarea.notes, #firms, #scatter, .term-pop, nav, .search, #more, #tone, #saved { display: none !important; }
+  .notes-print { display: block; white-space: pre-wrap; border: 1px solid var(--line); padding: 8px; border-radius: 6px; min-height: 0; }
+  .notes-print:empty { display: none; }
+  .print-only { display: block; font-size: 9.5px; color: #333; margin-top: 12px; border-top: 1px solid #ccc; padding-top: 6px; }
+  main { padding: 0; max-width: none; }
+  .card, .banner, .strip .cell { break-inside: avoid; box-shadow: none; }
+  .grid.g3, .grid.g2 { grid-template-columns: 1fr 1fr; }
+  .span2 { grid-column: span 2; }
+  .table-wrap { max-height: none; overflow: visible; }
+  a { color: inherit; text-decoration: none; }
+  .term { border: 0; }
+}
